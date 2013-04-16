@@ -265,3 +265,8 @@ def get_vendor():
     return (mpistr(name), (major, minor, micro))
 
 # --------------------------------------------------------------------
+
+def make_buffer(unsigned long long address, ssize_t size, bint readonly=False):
+    return tobuffer(<void*>address,size,readonly)
+
+
