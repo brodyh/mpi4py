@@ -25,3 +25,12 @@ updates.
 - This package uses standard `distutils`. For detailed instructions
   about requirements and the building/install process, read the file
   ``docs/source/usrman/install.rst``.
+
+
+==============
+added by Brody
+==============
+
+$ pip install cython==0.18
+$ cd src
+$ cython -I./include mpi4py.MPI.pyx
