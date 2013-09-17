@@ -113,7 +113,24 @@ class Config(object):
         if not filename: filename = "mpi.cfg"
         if not section:  section  = "mpi"
 
-        sections = [section+"-"+sys.platform, section]
+        mach = platform.machine()
+        arch = platform.architecture()[0]
+        plat = sys.platform
+        osnm = os.name
+        if   'linux' == plat[:5]: plat = 'linux'
+        elif 'sunos' == plat[:5]: plat = 'solaris'
+        elif 'win'   == plat[:3]: plat = 'windows'
+        suffixes = []
+        suffixes.append(plat+'-'+mach)
+        suffixes.append(plat+'-'+arch)
+        suffixes.append(plat)
+        suffixes.append(osnm+'-'+mach)
+        suffixes.append(osnm+'-'+arch)
+        suffixes.append(osnm)
+        suffixes.append(mach)
+        suffixes.append(arch)
+        sections  = [section+"-"+s for s in suffixes]
+        sections += [section]
         self.load(filename, sections)
         if not self:
             if os.name == 'posix':
@@ -127,28 +144,36 @@ class Config(object):
     def _setup_windows(self):
         from glob import glob
         ProgramFiles = os.environ.get('ProgramFiles', '')
-        for (name, install_suffix) in (
-            ('mpich2',   'MPICH2'),
-            ('openmpi',  'OpenMPI'),
-            ('openmpi',  'OpenMPI*'),
-            ('deinompi', 'DeinoMPI'),
-            ('msmpi',    'Microsoft HPC Pack 2008 SDK'),
+        CCP_HOME = os.environ.get('CCP_HOME', '')
+        for (name, prefix, suffix) in (
+            ('mpich3',   ProgramFiles, 'MPICH'),
+            ('mpich2',   ProgramFiles, 'MPICH2'),
+            ('openmpi',  ProgramFiles, 'OpenMPI'),
+            ('openmpi',  ProgramFiles, 'OpenMPI*'),
+            ('deinompi', ProgramFiles, 'DeinoMPI'),
+            ('msmpi',    CPP_HOME,     ''),
+            ('msmpi',    ProgramFiles, 'Microsoft HPC Pack 2012'),
+            ('msmpi',    ProgramFiles, 'Microsoft HPC Pack 2012 SDK'),
+            ('msmpi',    ProgramFiles, 'Microsoft HPC Pack 2008 R2'),
+            ('msmpi',    ProgramFiles, 'Microsoft HPC Pack 2008'),
+            ('msmpi',    ProgramFiles, 'Microsoft HPC Pack 2008 SDK'),
             ):
-            mpi_dir = os.path.join(ProgramFiles, install_suffix)
+            mpi_dir = os.path.join(prefix, suffix)
             if '*' in mpi_dir:
                 dirs = glob(mpi_dir)
                 if dirs:
                     mpi_dir = max(dirs)
-            if not os.path.isdir(mpi_dir):
+            if not (mpi_dir and os.path.isdir(mpi_dir)):
                 continue
             define_macros = []
-            include_dir = os.path.join(mpi_dir, 'include')
+            include_dirs = [os.path.join(mpi_dir, 'include')]
             library = 'mpi'
             library_dir = os.path.join(mpi_dir, 'lib')
             if name == 'openmpi':
                 define_macros.append(('OMPI_IMPORTS', None))
                 library = 'libmpi'
             if name == 'msmpi':
+                include_dirs.append(os.path.join(mpi_dir, 'inc'))
                 library = 'msmpi'
                 bits = platform.architecture()[0]
                 if bits == '32bit':
@@ -157,7 +182,7 @@ class Config(object):
                     library_dir = os.path.join(library_dir, 'amd64')
             self.library_info.update(
                 define_macros=define_macros,
-                include_dirs=[include_dir],
+                include_dirs=include_dirs,
                 libraries=[library],
                 library_dirs=[library_dir],
                 )

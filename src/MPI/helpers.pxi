@@ -29,6 +29,12 @@ cdef inline int equal_Status(MPI_Status* s1, MPI_Status* s2) nogil:
            return 0
    return 1
 
+cdef inline void copy_Status(MPI_Status* si, MPI_Status* so) nogil:
+   cdef size_t i=0, n=sizeof(MPI_Status)
+   cdef unsigned char* a = <unsigned char*>si
+   cdef unsigned char* b = <unsigned char*>so
+   for i from 0 <= i < n: b[i] = a[i]
+
 #------------------------------------------------------------------------------
 # Datatype
 
@@ -79,6 +85,24 @@ cdef inline int del_Request(MPI_Request* ob):
     return MPI_Request_free(ob)
 
 #------------------------------------------------------------------------------
+# Message
+
+cdef inline Message new_Message(MPI_Message ob):
+    cdef Message message = <Message>Message.__new__(Message)
+    message.ob_mpi = ob
+    return message
+
+cdef inline int del_Message(MPI_Message* ob):
+    #
+    if ob    == NULL                : return 0
+    if ob[0] == MPI_MESSAGE_NULL    : return 0
+    if ob[0] == MPI_MESSAGE_NO_PROC : return 0
+    if not mpi_active()             : return 0
+    #
+    # ob[0] = MPI_MESSAGE_NULL
+    return 0
+
+#------------------------------------------------------------------------------
 # Op
 
 include "opimpl.pxi"
@@ -100,6 +124,7 @@ cdef inline Op new_Op(MPI_Op ob):
     elif ob == MPI_MAXLOC  : op.ob_func = _op_MAXLOC
     elif ob == MPI_MINLOC  : op.ob_func = _op_MINLOC
     elif ob == MPI_REPLACE : op.ob_func = _op_REPLACE
+    elif ob == MPI_NO_OP   : op.ob_func = _op_NO_OP
     return op
 
 cdef inline int del_Op(MPI_Op* ob):
@@ -135,6 +160,7 @@ cdef inline int del_Info(MPI_Info* ob):
     #
     if ob    == NULL          : return 0
     if ob[0] == MPI_INFO_NULL : return 0
+    if ob[0] == MPI_INFO_ENV  : return 0
     if not mpi_active()       : return 0
     #
     return MPI_Info_free(ob)

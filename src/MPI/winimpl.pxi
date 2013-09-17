@@ -6,7 +6,7 @@ cdef extern from *:
 cdef void win_memory_decref(void *ob) with gil:
     Py_DECREF(<object>ob)
 
-@cython.callspec("PyMPIAPI")
+@cython.callspec("MPIAPI")
 cdef int win_memory_del(MPI_Win w, int k, void *v, void *xs) nogil:
     if  v != NULL:
         if Py_IsInitialized():
@@ -42,12 +42,13 @@ cdef inline int win_keyval_del(int keyval) except -1:
     except KeyError: pass
     return 0
 
-cdef inline int win_attr_copy(MPI_Win win,
-                              int keyval,
-                              void *extra_state,
-                              void *attrval_in,
-                              void *attrval_out,
-                              int *flag) except -1:
+cdef int win_attr_copy(
+    MPI_Win win,
+    int keyval,
+    void *extra_state,
+    void *attrval_in,
+    void *attrval_out,
+    int *flag) except -1:
     cdef tuple entry = win_keyval.get(keyval)
     cdef object copy_fn = None
     if entry is not None: copy_fn = entry[0]
@@ -63,10 +64,30 @@ cdef inline int win_attr_copy(MPI_Win win,
     flag[0] = 1
     return 0
 
-cdef inline int win_attr_delete(MPI_Win win,
-                                int keyval,
-                                void *attrval,
-                                void *extra_state) except -1:
+cdef int win_attr_copy_cb(
+    MPI_Win win,
+    int keyval,
+    void *extra_state,
+    void *attrval_in,
+    void *attrval_out,
+    int *flag) with gil:
+    cdef object exc
+    try:
+        win_attr_copy(win, keyval, extra_state,
+                       attrval_in, attrval_out, flag)
+    except MPIException as exc:
+        print_traceback()
+        return exc.Get_error_code()
+    except:
+        print_traceback()
+        return MPI_ERR_OTHER
+    return MPI_SUCCESS
+
+cdef int win_attr_delete(
+    MPI_Win win,
+    int keyval,
+    void *attrval,
+    void *extra_state) except -1:
     cdef tuple entry = win_keyval.get(keyval)
     cdef object delete_fn = None
     if entry is not None: delete_fn = entry[1]
@@ -75,24 +96,15 @@ cdef inline int win_attr_delete(MPI_Win win,
     Py_DECREF(<object>attrval)
     return 0
 
-@cython.callspec("PyMPIAPI")
-cdef int win_attr_copy_fn(MPI_Win win,
-                           int keyval,
-                           void *extra_state,
-                           void *attrval_in,
-                           void *attrval_out,
-                           int *flag) with gil:
-    if not Py_IsInitialized():
-        return MPI_SUCCESS
-    if attrval_in == NULL:
-        return MPI_ERR_INTERN
-    if attrval_out == NULL:
-        return MPI_ERR_INTERN
+cdef int win_attr_delete_cb(
+    MPI_Win win,
+    int keyval,
+    void *attrval,
+    void *extra_state) with gil:
     cdef object exc
     try:
-        win_attr_copy(win, keyval, extra_state,
-                       attrval_in, attrval_out, flag)
-    except MPIException, exc:
+        win_attr_delete(win, keyval, attrval, extra_state)
+    except MPIException as exc:
         print_traceback()
         return exc.Get_error_code()
     except:
@@ -100,24 +112,26 @@ cdef int win_attr_copy_fn(MPI_Win win,
         return MPI_ERR_OTHER
     return MPI_SUCCESS
 
-@cython.callspec("PyMPIAPI")
+@cython.callspec("MPIAPI")
+cdef int win_attr_copy_fn(MPI_Win win,
+                          int keyval,
+                          void *extra_state,
+                          void *attrval_in,
+                          void *attrval_out,
+                          int *flag) nogil:
+    if attrval_in  == NULL: return MPI_ERR_INTERN
+    if attrval_out == NULL: return MPI_ERR_INTERN
+    if not Py_IsInitialized(): return MPI_SUCCESS
+    return win_attr_copy_cb(win, keyval, extra_state,
+                            attrval_in, attrval_out, flag)
+
+@cython.callspec("MPIAPI")
 cdef int win_attr_delete_fn(MPI_Win win,
-                             int keyval,
-                             void *attrval,
-                             void *extra_state) with gil:
-    if not Py_IsInitialized():
-        return MPI_SUCCESS
-    if attrval == NULL:
-        return MPI_ERR_INTERN
-    cdef object exc
-    try:
-        win_attr_delete(win, keyval, attrval, extra_state)
-    except MPIException, exc:
-        print_traceback()
-        return exc.Get_error_code()
-    except:
-        print_traceback()
-        return MPI_ERR_OTHER
-    return MPI_SUCCESS
+                            int keyval,
+                            void *attrval,
+                            void *extra_state) nogil:
+    if attrval == NULL: return MPI_ERR_INTERN
+    if not Py_IsInitialized(): return MPI_SUCCESS
+    return win_attr_delete_cb(win, keyval, attrval, extra_state)
 
 # -----------------------------------------------------------------------------

@@ -4,8 +4,10 @@ cdef class Info:
     Info
     """
 
-    def __cinit__(self):
+    def __cinit__(self, Info info=None):
         self.ob_mpi = MPI_INFO_NULL
+        if info is not None:
+            self.ob_mpi = info.ob_mpi
 
     def __dealloc__(self):
         if not (self.flags & PyMPI_OWNED): return
@@ -217,9 +219,11 @@ cdef class Info:
 
 
 cdef Info __INFO_NULL__ = new_Info(MPI_INFO_NULL)
+cdef Info __INFO_ENV__  = new_Info(MPI_INFO_ENV)
 
 
 # Predefined info handles
 # -----------------------
 
 INFO_NULL = __INFO_NULL__  #: Null info handle
+INFO_ENV  = __INFO_ENV__   #: Environment info handle

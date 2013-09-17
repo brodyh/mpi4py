@@ -100,6 +100,8 @@ Programming Language :: Cython
 Programming Language :: Python
 Programming Language :: Python :: 2
 Programming Language :: Python :: 3
+Programming Language :: Python :: Implementation :: CPython
+Programming Language :: Python :: Implementation :: PyPy
 Topic :: Scientific/Engineering
 Topic :: Software Development :: Libraries :: Python Modules
 Topic :: System :: Distributed Computing
@@ -183,6 +185,7 @@ def configure_mpi(ext, config_cmd):
               "Check your configuration!!!")
     ok = config_cmd.check_header("mpi.h", headers=["stdlib.h"])
     if not ok: raise DistutilsPlatformError(errmsg)
+    #
     headers = ["stdlib.h", "mpi.h"]
     ConfigTest = dedent("""\
     int main(int argc, char **argv)
@@ -200,13 +203,14 @@ def configure_mpi(ext, config_cmd):
     if not ok: raise DistutilsPlatformError(errmsg % "link")
     #
     log.info("checking for missing MPI functions/symbols ...")
-    macros = ("MPICH2 OPEN_MPI DEINO_MPI "
-              "MPICH_NAME LAM_MPI "
-              ).strip().split()
+    tests  = ["defined(%s)" % macro for macro in
+              ("OPEN_MPI", "MPICH2", "DEINO_MPI", "MSMPI_VER",)]
+    tests += ["(defined(MPICH_NAME)&&(MPICH_NAME==3))"]
     ConfigTest = dedent('''\
     #if !(%s)
     #error "Unknown MPI"
-    #endif ''') % "||".join(["defined(%s)" % m for m in macros])
+    #endif
+    ''') % "||".join(tests)
     ok = config_cmd.try_compile(ConfigTest, headers=headers)
     if not ok:
         from conf.mpidistutils import ConfigureMPI
@@ -229,13 +233,11 @@ def configure_mpi(ext, config_cmd):
 def configure_mpe(ext, config_cmd):
     from distutils import log
     log.info("checking for MPE availability ...")
-    lmpe = config_cmd.check_library('lmpe')
-    mpe  = config_cmd.check_library('mpe')
-    pth  = config_cmd.check_library('pthread')
     libraries = []
-    if lmpe: libraries += ['lmpe']
-    if mpe:  libraries += ['mpe']
-    if pth:  libraries += ['pthread']
+    for libname in ('pthread', 'mpe', 'lmpe'):
+        if config_cmd.check_library(
+            libname, other_libraries=libraries):
+            libraries.insert(0, libname)
     ok = (config_cmd.check_header("mpe.h",
                                   headers=["stdlib.h",
                                            "mpi.h"])
@@ -249,11 +251,11 @@ def configure_mpe(ext, config_cmd):
           )
     if ok:
         ext.define_macros += [('HAVE_MPE', 1)]
-        if (linux or darwin or solaris) and lmpe:
-            del libraries[0]
+        if ((linux or darwin or solaris) and
+            libraries[0] == 'lmpe'):
             ext.extra_link_args += whole_archive('lmpe')
-            ext.extra_link_args += ['-l' + lib
-                                    for lib in libraries]
+            for libname in libraries[1:]:
+                ext.extra_link_args += ['-l' + libname]
         else:
             ext.libraries += libraries
 
@@ -270,18 +272,19 @@ def configure_dl(ext, config_cmd):
     if ok: ext.define_macros += [('HAVE_DLOPEN', 1)]
 
 def configure_libmpe(lib, config_cmd):
-    mpe = config_cmd.check_library('mpe')
-    if mpe:
-        log = config_cmd.check_library('lmpe')
-        pth = config_cmd.check_library('pthread')
-        if (linux or darwin or solaris) and log:
-            if log: lib.extra_link_args += whole_archive('lmpe')
-            if mpe: lib.extra_link_args += ['-lmpe']
-            if pth: lib.extra_link_args += ['-lpthread']
+    libraries = []
+    for libname in ('pthread', 'mpe', 'lmpe'):
+        if config_cmd.check_library(
+            libname, other_libraries=libraries):
+            libraries.insert(0, libname)
+    if 'mpe' in libraries:
+        if ((linux or darwin or solaris) and
+            libraries[0] == 'lmpe'):
+            lib.extra_link_args += whole_archive('lmpe')
+            for libname in libraries[1:]:
+                lib.extra_link_args += ['-l' + libname]
         else:
-            if log: lib.libraries += ['lmpe']
-            if mpe: lib.libraries += ['mpe']
-            if pth: lib.libraries += ['pthread']
+            lib.libraries += libraries
 
 def configure_libvt(lib, config_cmd):
     if lib.name == 'vt':
@@ -289,12 +292,17 @@ def configure_libvt(lib, config_cmd):
         for vt_lib in ('vt-mpi', 'vt.mpi'):
             ok = config_cmd.check_library(vt_lib)
             if ok: break
-        if ok:
-            if linux or darwin or solaris:
-                lib.extra_link_args += whole_archive(vt_lib)
-                lib.extra_link_args += ['-lotf', '-lz', '-ldl']
-            else:
-                lib.libraries += [vt_lib, 'otf', 'z', 'dl'],
+        if not ok: return
+        libraries = []
+        for libname in ('otf', 'z', 'dl'):
+            ok = config_cmd.check_library(libname)
+            if ok: libraries.append(libname)
+        if linux or darwin or solaris:
+            lib.extra_link_args += whole_archive(vt_lib)
+            lib.extra_link_args += ['-l%s' % libname
+                                    for libname in libraries]
+        else:
+            lib.libraries += [vt_lib] + libraries
     elif lib.name in ('vt-mpi', 'vt-hyb'):
         vt_lib = lib.name
         ok = config_cmd.check_library(vt_lib)
@@ -452,16 +460,19 @@ def run_setup():
                                       'include/mpi4py/*.pxd',
                                       'include/mpi4py/*.pyx',
                                       'include/mpi4py/*.pxi',
-                                      'include/mpi4py/*.i',]},
+                                      'include/mpi4py/*.i',
+                                      'MPI.pxd', 'libmpi.pxd',
+                                      'mpi_c.pxd',]},
           ext_modules  = [Ext(**ext) for ext in ext_modules()],
           libraries    = [Lib(**lib) for lib in libraries()  ],
           executables  = [Exe(**exe) for exe in executables()],
           **metadata)
 
 def chk_cython(VERSION):
-    CYTHON_VERSION_REQUIRED = VERSION
+    import re
     from distutils import log
-    from distutils.version import StrictVersion as Version
+    from distutils.version import LooseVersion
+    from distutils.version import StrictVersion
     warn = lambda msg='': sys.stderr.write(msg+'\n')
     #
     cython_zip = 'cython.zip'
@@ -486,17 +497,20 @@ def chk_cython(VERSION):
         CYTHON_VERSION = Cython.__version__
     except AttributeError:
         from Cython.Compiler.Version import version as CYTHON_VERSION
-    CYTHON_VERSION = CYTHON_VERSION.split('+', 1)[0]
-    for s in ('.alpha', 'alpha'):
-        CYTHON_VERSION = CYTHON_VERSION.replace(s, 'a')
-    for s in ('.beta',  'beta', '.rc', 'rc', '.c', 'c'):
-        CYTHON_VERSION = CYTHON_VERSION.replace(s, 'b')
-    if (CYTHON_VERSION_REQUIRED is not None and
-        Version(CYTHON_VERSION) < Version(CYTHON_VERSION_REQUIRED)):
+    REQUIRED = VERSION
+    m = re.match(r"(\d+\.\d+(?:\.\d+)?).*", CYTHON_VERSION)
+    if m:
+        Version = StrictVersion
+        AVAILABLE = m.groups()[0]
+    else:
+        Version = LooseVersion
+        AVAILABLE = CYTHON_VERSION
+    if (REQUIRED is not None and
+        Version(AVAILABLE) < Version(REQUIRED)):
         warn("*"*80)
         warn()
         warn(" You need to install Cython %s (you have version %s)"
-             % (CYTHON_VERSION_REQUIRED, CYTHON_VERSION))
+             % (REQUIRED, CYTHON_VERSION))
         warn(" Download and install Cython <http://www.cython.org>")
         warn()
         warn("*"*80)
@@ -574,7 +588,14 @@ def run_testsuite(cmd):
         from runtests import main
     finally:
         del sys.path[0]
-    err = main(cmd.args or [])
+    if cmd.dry_run:
+        return
+    args = cmd.args[:] or []
+    if cmd.verbose < 1:
+        args.insert(0,'-q')
+    if cmd.verbose > 1:
+        args.insert(0,'-v')
+    err = main(args)
     if err:
         raise DistutilsError("test")
 

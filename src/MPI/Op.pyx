@@ -4,8 +4,12 @@ cdef class Op:
     Op
     """
 
-    def __cinit__(self):
+    def __cinit__(self, Op op=None):
         self.ob_mpi = MPI_OP_NULL
+        if op is not None:
+            self.ob_mpi = op.ob_mpi
+            self.ob_func = op.ob_func
+            self.ob_usrid = 0 # XXX
 
     def __dealloc__(self):
         if not (self.flags & PyMPI_OWNED): return
@@ -115,6 +119,7 @@ cdef Op __BXOR__    = new_Op( MPI_BXOR    )
 cdef Op __MAXLOC__  = new_Op( MPI_MAXLOC  )
 cdef Op __MINLOC__  = new_Op( MPI_MINLOC  )
 cdef Op __REPLACE__ = new_Op( MPI_REPLACE )
+cdef Op __NO_OP__   = new_Op( MPI_NO_OP   )
 
 
 # Predefined operation handles
@@ -134,3 +139,4 @@ BXOR    = __BXOR__     #: Bit-wise xor
 MAXLOC  = __MAXLOC__   #: Maximum and location
 MINLOC  = __MINLOC__   #: Minimum and location
 REPLACE = __REPLACE__  #: Replace (for RMA)
+NO_OP   = __NO_OP__    #: No-op   (for RMA)

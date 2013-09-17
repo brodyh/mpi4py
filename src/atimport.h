@@ -6,31 +6,51 @@
 
 /* ------------------------------------------------------------------------- */
 
+#if defined(MS_WINDOWS)
+#if defined(MSMPI_VER) || (defined(MPICH2) && defined(MPIAPI))
+  #define MS_MPI 1
+#endif
+#if (defined(MS_MPI) || defined(DEINO_MPI)) && !defined(MPICH2)
+  #define MPICH2 1
+#endif
+#endif
+#if defined(MPICH_NAME) && (MPICH_NAME==3)
+  #define MPICH3 1
+#endif
 #if defined(MPICH_NAME) && (MPICH_NAME==1)
-#define MPICH1 1
+  #define MPICH1 1
 #endif
 
-#if defined(MS_WINDOWS) && defined(MPICH2) && defined(MPIAPI)
-#define MS_MPI 1
+#if defined(MS_WINDOWS) && !defined(MPIAPI)
+#if defined(MPI_CALL) /* DeinoMPI */
+  #define MPIAPI MPI_CALL
 #endif
-
-#if defined(MS_WINDOWS) && defined(DEINO_MPI) && !defined(MPICH2)
-#define MPICH2 1
+#endif
+#if !defined(MPIAPI)
+  #define MPIAPI
 #endif
 
 /* XXX describe */
 #if defined(HAVE_CONFIG_H)
 #include "config.h"
+#elif defined(MPICH3)
+#include "config/mpich3.h"
 #elif defined(MPICH2)
 #include "config/mpich2.h"
 #elif defined(OPEN_MPI)
 #include "config/openmpi.h"
-#elif defined(MPICH1)
-#include "config/mpich1.h"
-#elif defined(LAM_MPI)
-#include "config/lammpi.h"
 #else /* Unknown MPI*/
 #include "config/unknown.h"
+#endif
+
+#ifdef PyMPI_MISSING_MPI_Type_create_f90_integer
+#undef PyMPI_HAVE_MPI_Type_create_f90_integer
+#endif
+#ifdef PyMPI_MISSING_MPI_Type_create_f90_real
+#undef PyMPI_HAVE_MPI_Type_create_f90_real
+#endif
+#ifdef PyMPI_MISSING_MPI_Type_create_f90_complex
+#undef PyMPI_HAVE_MPI_Type_create_f90_complex
 #endif
 
 /* XXX describe */
@@ -38,29 +58,18 @@
 #include "fallback.h"
 
 /* XXX describe */
-#if   defined(MPICH2)
+#if   defined(MPICH3)
+#include "compat/mpich3.h"
+#elif defined(MPICH2)
 #include "compat/mpich2.h"
 #elif defined(OPEN_MPI)
 #include "compat/openmpi.h"
+#elif defined(HP_MPI)
+#include "compat/hpmpi.h"
 #elif defined(MPICH1)
 #include "compat/mpich1.h"
 #elif defined(LAM_MPI)
 #include "compat/lammpi.h"
-#elif defined(HP_MPI)
-#include "compat/hpmpi.h"
-#endif
-
-/* ------------------------------------------------------------------------- */
-
-#if defined(MS_WINDOWS) && !defined(PyMPIAPI)
-  #if defined(MPI_CALL)   /* DeinoMPI */
-    #define PyMPIAPI MPI_CALL
-  #elif defined(MPIAPI)   /* Microsoft MPI */
-    #define PyMPIAPI MPIAPI
-  #endif
-#endif
-#if !defined(PyMPIAPI)
-  #define PyMPIAPI
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -94,7 +103,7 @@ static int PyMPI_KEYVAL_WIN_MEMORY = MPI_KEYVAL_INVALID;
 
 static int PyMPI_StartUp(void);
 static int PyMPI_CleanUp(void);
-static int PyMPIAPI PyMPI_AtExitMPI(MPI_Comm,int,void*,void*);
+static int MPIAPI PyMPI_AtExitMPI(MPI_Comm,int,void*,void*);
 
 static int PyMPI_STARTUP_DONE = 0;
 static int PyMPI_StartUp(void)
@@ -118,7 +127,7 @@ static int PyMPI_StartUp(void)
   if (PyMPI_KEYVAL_MPI_ATEXIT == MPI_KEYVAL_INVALID) {
     int keyval = MPI_KEYVAL_INVALID;
     (void)P_MPI_Comm_create_keyval(MPI_COMM_NULL_COPY_FN,
-                                    PyMPI_AtExitMPI, &keyval, 0);
+                                   PyMPI_AtExitMPI, &keyval, 0);
     (void)P_MPI_Comm_set_attr(MPI_COMM_SELF, keyval, 0);
     PyMPI_KEYVAL_MPI_ATEXIT = keyval;
   }
@@ -154,52 +163,28 @@ static int PyMPI_CleanUp(void)
   return MPI_SUCCESS;
 }
 
-static int PyMPIAPI
-PyMPI_AtExitMPI(MPI_Comm comm, int k, void *v, void *xs)
+static int MPIAPI
+PyMPI_AtExitMPI(PyMPI_UNUSED MPI_Comm comm, 
+                PyMPI_UNUSED int k,
+                PyMPI_UNUSED void *v,
+                PyMPI_UNUSED void *xs)
 {
-  comm=MPI_COMM_NULL; k=0; v=0; xs=0;
   return PyMPI_CleanUp();
 }
 
 /* ------------------------------------------------------------------------- */
 
-
-/* ------------------------------------------------------------------------- */
-
-static PyObject *
-PyMPI_Allocate(Py_ssize_t m, size_t b, void **pp)
-{
-  PyObject *ob;
-  Py_ssize_t n = m * (Py_ssize_t)b;
-  if (n > PY_SSIZE_T_MAX)
-    return PyErr_NoMemory();
-  else if (n < 0) {
-    PyErr_SetString(PyExc_RuntimeError,
-                    "memory allocation with negative size");
-    return NULL;
-  }
-#if PY_VERSION_HEX >= 0x02060000
-  ob = PyByteArray_FromStringAndSize(NULL, (n==0) ? 1 : n);
-  if (ob && n==0 && (PyByteArray_Resize(ob, 0) < 0)) {
-    Py_DECREF(ob);
-    return NULL;
-  }
-  if (ob && pp)
-    *pp = (void *)PyByteArray_AS_STRING(ob);
-#else
-  {
-    void *p = PyMem_Malloc((size_t)n);
-    if (!p)
-      return PyErr_NoMemory();
-    ob = PyCObject_FromVoidPtr(p, PyMem_Free);
-    if (!ob)
-      PyMem_Free(p);
-    else if (pp)
-      *pp = p;
-  }
+#if !defined(PyMPI_USE_MATCHED_RECV)
+  #if defined(PyMPI_HAVE_MPI_Mprobe) && \
+      defined(PyMPI_HAVE_MPI_Mrecv)
+    #define PyMPI_USE_MATCHED_RECV 1
+  #else
+    #define PyMPI_USE_MATCHED_RECV 0
+  #endif
 #endif
-  return ob;
-}
+#if !defined(PyMPI_USE_MATCHED_RECV)
+  #define PyMPI_USE_MATCHED_RECV 0
+#endif
 
 /* ------------------------------------------------------------------------- */
 
@@ -279,6 +264,7 @@ PyBuffer_FillInfo(Py_buffer *view, PyObject *obj,
   view->len = len;
   view->itemsize = 1;
   view->readonly = readonly;
+
   view->format = NULL;
   if ((flags & PyBUF_FORMAT) == PyBUF_FORMAT)
     view->format = "B";
@@ -336,6 +322,70 @@ PyMemoryView_FromBuffer(Py_buffer *view)
   }
 }
 #endif
+
+/* ------------------------------------------------------------------------- */
+
+#ifdef PYPY_VERSION
+  #define PyMPI_RUNTIME_PYPY    1
+  #define PyMPI_RUNTIME_CPYTHON 0
+#else
+  #define PyMPI_RUNTIME_PYPY    0
+  #define PyMPI_RUNTIME_CPYTHON 1
+#endif
+
+#ifdef PYPY_VERSION
+
+static int PyMPI_UNUSED
+_PyLong_AsByteArray(PyLongObject* v,
+                    unsigned char* bytes, size_t n,
+                    int little_endian, int is_signed)
+{
+  PyErr_SetString(PyExc_RuntimeError,
+                  "PyPy: _PyLong_AsByteArray() not available");
+  return -1;
+}
+
+#if PY_VERSION_HEX < 0x02070300 /* PyPy < 2.0 */
+static int
+PyBuffer_FillInfo_PyPy(Py_buffer *view, PyObject *obj,
+                       void *buf, Py_ssize_t len,
+                       int readonly, int flags)
+{
+  if (view == NULL) return 0;
+  if ((flags & PyBUF_WRITABLE) && readonly) {
+    PyErr_SetString(PyExc_BufferError, "Object is not writable.");
+    return -1;
+  }
+  if (PyBuffer_FillInfo(view, obj, buf, len, readonly, flags) < 0)
+    return -1;
+  view->readonly = readonly;
+  return 0;
+}
+#define PyBuffer_FillInfo PyBuffer_FillInfo_PyPy
+#endif
+
+static PyObject *
+PyMemoryView_FromBuffer_PyPy(Py_buffer *view)
+{
+  if (view->obj) {
+    if (view->readonly)
+      return PyBuffer_FromObject(view->obj, 0, view->len);
+    else
+      return PyBuffer_FromReadWriteObject(view->obj, 0, view->len);
+  } else {
+    if (view->readonly)
+      return PyBuffer_FromMemory(view->buf,view->len);
+    else
+      return PyBuffer_FromReadWriteMemory(view->buf,view->len);
+  }
+}
+#define PyMemoryView_FromBuffer PyMemoryView_FromBuffer_PyPy
+
+#if PY_VERSION_HEX < 0x02070300 /* PyPy < 2.0 */
+#define PyCode_GetNumFree(o) PyCode_GetNumFree((PyObject *)(o))
+#endif
+
+#endif/*PYPY_VERSION*/
 
 /* ------------------------------------------------------------------------- */
 

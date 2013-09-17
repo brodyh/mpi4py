@@ -20,6 +20,21 @@ class TestInfoNull(unittest.TestCase):
         self.assertEqual(inull.values(), [])
         self.assertEqual(inull.items(), [])
 
+class TestInfoEnv(unittest.TestCase):
+
+    def testTruth(self):
+        self.assertTrue(bool(MPI.INFO_ENV))
+
+    def testPyMethods(self):
+        env = MPI.INFO_ENV
+        if env == MPI.INFO_NULL: return
+        for key in ("command", "argv",
+                    "maxprocs", "soft",
+                    "host", "arch",
+                    "wdir", "file",
+                    "thread_level"):
+            v = env.Get(key)
+
 class TestInfo(unittest.TestCase):
 
     def setUp(self):
@@ -134,7 +149,12 @@ class TestInfo(unittest.TestCase):
 try:
     MPI.Info.Create().Free()
 except NotImplementedError:
-    del TestInfoNull, TestInfo
+    del TestInfoNull
+    del TestInfo
+if (MPI.VERSION < 3 and
+    MPI.INFO_ENV == MPI.INFO_NULL):
+    del TestInfoEnv
+
 
 if __name__ == '__main__':
     unittest.main()

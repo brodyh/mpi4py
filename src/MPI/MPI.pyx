@@ -2,7 +2,7 @@ __doc__ = """
 Message Passing Interface
 """
 
-include "mpi4py/mpi.pxi"
+from mpi4py.libmpi cimport *
 
 include "stdlib.pxi"
 include "atimport.pxi"
@@ -15,8 +15,8 @@ include "asbuffer.pxi"
 include "asmemory.pxi"
 include "asarray.pxi"
 include "helpers.pxi"
-include "message.pxi"
-include "pickled.pxi"
+include "msgbuffer.pxi"
+include "msgpickle.pxi"
 
 include "CAPI.pxi"
 
@@ -25,6 +25,7 @@ include "Errhandler.pyx"
 include "Datatype.pyx"
 include "Status.pyx"
 include "Request.pyx"
+include "Message.pyx"
 include "Info.pyx"
 include "Op.pyx"
 include "Group.pyx"
@@ -56,6 +57,11 @@ BOTTOM = __BOTTOM__
 IN_PLACE = __IN_PLACE__
 #"""*In-place* option for collective communications"""
 
+UNWEIGHTED    = __UNWEIGHTED__
+#"""Unweighted graph"""
+
+WEIGHTS_EMPTY = __WEIGHTS_EMPTY__
+#"""Empty graph weights"""
 
 
 # Predefined Attribute Keyvals
@@ -73,10 +79,11 @@ APPNUM          = MPI_APPNUM
 
 LASTUSEDCODE    = MPI_LASTUSEDCODE
 
-WIN_BASE        = MPI_WIN_BASE
-WIN_SIZE        = MPI_WIN_SIZE
-WIN_DISP_UNIT   = MPI_WIN_DISP_UNIT
-
+WIN_BASE          = MPI_WIN_BASE
+WIN_SIZE          = MPI_WIN_SIZE
+WIN_DISP_UNIT     = MPI_WIN_DISP_UNIT
+WIN_CREATE_FLAVOR = MPI_WIN_CREATE_FLAVOR
+WIN_MODEL         = MPI_WIN_MODEL
 
 # Memory Allocation
 # -----------------
@@ -97,7 +104,6 @@ def Free_mem(memory):
     cdef void *base = NULL
     asmemory(memory, &base, NULL)
     CHKERR( MPI_Free_mem(base) )
-
 
 # Initialization and Exit
 # -----------------------
@@ -193,6 +199,15 @@ def Get_version():
     CHKERR( MPI_Get_version(&version, &subversion) )
     return (version, subversion)
 
+def Get_library_version():
+    """
+    Obtain the version string of the MPI library
+    """
+    cdef char name[MPI_MAX_LIBRARY_VERSION_STRING+1]
+    cdef int nlen = 0
+    CHKERR( MPI_Get_library_version(name, &nlen) )
+    return tompistr(name, nlen)
+
 # Environmental Inquires
 # ----------------------
 
@@ -243,8 +258,8 @@ MAX_INFO_KEY       = MPI_MAX_INFO_KEY
 MAX_INFO_VAL       = MPI_MAX_INFO_VAL
 MAX_OBJECT_NAME    = MPI_MAX_OBJECT_NAME
 MAX_DATAREP_STRING = MPI_MAX_DATAREP_STRING
-
-
+# MPI-3
+MAX_LIBRARY_VERSION_STRING = MPI_MAX_LIBRARY_VERSION_STRING
 
 # --------------------------------------------------------------------
 
@@ -265,8 +280,31 @@ def get_vendor():
     return (mpistr(name), (major, minor, micro))
 
 # --------------------------------------------------------------------
-
 def make_buffer(unsigned long long address, ssize_t size, bint readonly=False):
     return tobuffer(<void*>address,size,readonly)
 
-
+if PYPY: exec """
+def _pypy_setup():
+    for klass in (
+        Status,
+        Datatype,
+        Request,
+        Prequest,
+        Grequest,
+        Message,
+        Op,
+        Group,
+        Info,
+        Errhandler,
+        Comm,
+        Win,
+        File,
+        ):
+        for name in klass.__dict__:
+            meth = klass.__dict__[name]
+            if (isinstance(meth, classmethod) or
+                isinstance(meth, staticmethod)):
+                hasattr(klass, name)
+_pypy_setup()
+del _pypy_setup
+""" in globals()

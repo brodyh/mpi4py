@@ -188,6 +188,17 @@ class TestDatatype(unittest.TestCase):
                 #args = (block, displacements) XXX
                 #self._test_derived(dtype, factory, *args)  XXX
 
+    def testCreateHindexedBlock(self):
+        for dtype in datatypes:
+            for block in range(5):
+                displacements = [0]
+                for i in range(5):
+                    stride = displacements[-1] + block * dtype.extent + 1
+                    displacements.append(stride)
+                factory = MPI.Datatype.Create_hindexed_block
+                args = (block, displacements)
+                self._test_derived(dtype, factory, *args)
+
     def testCreateStruct(self):
         for dtype1 in datatypes:
             for dtype2 in datatypes:
@@ -245,11 +256,22 @@ class TestDatatype(unittest.TestCase):
 class TestGetAddress(unittest.TestCase):
 
     def testGetAddress(self):
-        from array import array
-        location = array('i', range(10))
-        addr = MPI.Get_address(location)
-        bufptr, buflen = location.buffer_info()
-        self.assertEqual(addr, bufptr)
+        try:
+            from array import array
+            location = array('i', range(10))
+            bufptr, _ = location.buffer_info()
+            addr = MPI.Get_address(location)
+            self.assertEqual(addr, bufptr)
+        except ImportError:
+            pass
+        try:
+            from numpy import asarray
+            location = asarray(range(10), dtype='i')
+            bufptr, _ = location.__array_interface__['data']
+            addr = MPI.Get_address(location)
+            self.assertEqual(addr, bufptr)
+        except ImportError:
+            pass
 
 import sys
 _name, _version = MPI.get_vendor()

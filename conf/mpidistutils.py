@@ -29,6 +29,7 @@ def fix_config_vars(names, values):
         if 'ARCHFLAGS' in os.environ:
             ARCHFLAGS = os.environ['ARCHFLAGS']
             for i, flag in enumerate(list(values)):
+                if flag is None: continue
                 flag, count = re.subn('-arch\s+\w+', ' ', flag)
                 if count and ARCHFLAGS:
                     flag = flag + ' ' + ARCHFLAGS
@@ -36,11 +37,18 @@ def fix_config_vars(names, values):
         if 'SDKROOT' in os.environ:
             SDKROOT = os.environ['SDKROOT']
             for i, flag in enumerate(list(values)):
+                if flag is None: continue
                 flag, count = re.subn('-isysroot [^ \t]*', ' ', flag)
                 if count and SDKROOT:
                     flag = flag + ' ' + '-isysroot ' + SDKROOT
                 values[i] = flag
     return values
+
+if hasattr(sys, 'pypy_version_info'):
+    config_vars = sysconfig.get_config_vars()
+    for name in ('prefix', 'exec_prefix'):
+        if name not in config_vars:
+            config_vars[name] = os.path.normpath(getattr(sys, name))
 
 def get_config_vars(*names):
     # Core Python configuration
@@ -81,9 +89,10 @@ def fix_linker_cmd(ld, mpild):
 def split_linker_cmd(ld):
     from os.path import basename
     ld = split_quoted(ld)
+    if not ld: return '', ''
     i = 0
     if (sys.platform.startswith('aix') and
-        basename(pyld[i]) == 'ld_so_aix'):
+        basename(ld[i]) == 'ld_so_aix'):
         i = i + 1
     while basename(ld[i]) == 'env':
         i = i + 1
@@ -117,13 +126,19 @@ def customize_compiler(compiler, lang=None,
          basecflags, opt) = get_config_vars (
             'CC', 'CXX', 'CCSHARED', 'LDSHARED',
             'BASECFLAGS', 'OPT')
-        cc  = cc  .replace('-pthread', '')
-        cxx = cxx .replace('-pthread', '')
-        ld  = ld  .replace('-pthread', '')
+        cc  = (cc  or '').replace('-pthread', '')
+        cxx = (cxx or '').replace('-pthread', '')
+        ld  = (ld  or '').replace('-pthread', '')
         ld, ldshared = split_linker_cmd(ld)
         basecflags, opt = basecflags or '', opt or ''
         ccshared = ccshared or ''
         ldshared = ldshared or ''
+        if hasattr(sys, 'pypy_version_info'):
+            basecflags =  '-Wall -Wimplicit'
+            if not ccshared: ccshared = '-fPIC'
+            if not ldshared: ldshared = '-shared'
+            if sys.platform == 'darwin':
+                ldshared += ' -Wl,-undefined,dynamic_lookup'
         # Compiler command overriding
         if not mpild and (mpicc or mpicxx):
             if lang == 'c':
@@ -197,6 +212,14 @@ def customize_compiler(compiler, lang=None,
             compiler.compiler_so[i] = compiler.compiler_cxx[j]
             try: compiler.compiler_so.remove('-Wstrict-prototypes')
             except: pass
+    if (compiler.compiler_type == 'mingw32' and
+        compiler.gcc_version >= '4.4'):
+        # http://bugs.python.org/issue12641
+        for attr in (
+            'preprocessor', 'compiler', 'compiler_cxx',
+            'compiler_so','linker_so', 'linker_exe'):
+            try: getattr(compiler, attr).remove('-mno-cygwin')
+            except: pass
     if compiler.compiler_type == 'msvc':
         if not compiler.initialized:
             compiler.initialize()
@@ -269,7 +292,7 @@ except ImportError:
 class ConfigureMPI(object):
 
     SRCDIR = 'src'
-    SOURCES = [os.path.join('include', 'mpi4py', 'mpi.pxi')]
+    SOURCES = [os.path.join('include', 'mpi4py', 'libmpi.pxd')]
     DESTDIR = 'src'
     CONFIG_H = 'config.h'
     MISSING_H = 'missing.h'
@@ -318,7 +341,7 @@ class ConfigureMPI(object):
         #
         body = ['#include "%s"' % configtest_h,
                 'int main(int argc, char **argv) {',
-                '  %s' % code,
+                '\n'.join(['  ' + line for line in code.split('\n')]),
                 '  return 0;',
                 '}']
         body = '\n'.join(body) + '\n'

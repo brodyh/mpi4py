@@ -5,6 +5,10 @@
 
 #ifdef Py_PYTHON_H
 
+#ifndef PyMPI_snprintf
+#define PyMPI_snprintf PyOS_snprintf
+#endif
+
 #ifndef PyMPI_MALLOC
 #define PyMPI_MALLOC PyMem_Malloc
 #endif
@@ -15,12 +19,17 @@
 #else
 
 #include <stdlib.h>
+#include <stdio.h>
+
+#ifndef PyMPI_snprintf
+#define PyMPI_snprintf snprintf
+#endif
 
 #ifndef PyMPI_MALLOC
 #define PyMPI_MALLOC malloc
 #endif
-#ifndef PyMPI_Free
-#define PyMPI_Free free
+#ifndef PyMPI_FREE
+#define PyMPI_FREE free
 #endif
 
 #endif
@@ -29,19 +38,19 @@
 
 /* Version Number */
 
-#ifdef PyMPI_MISSING_MPI_VERSION
+#ifndef PyMPI_HAVE_MPI_VERSION
 #if !defined(MPI_VERSION)
 #define MPI_VERSION 1
 #endif
 #endif
 
-#ifdef PyMPI_MISSING_MPI_SUBVERSION
+#ifndef PyMPI_HAVE_MPI_SUBVERSION
 #if !defined(MPI_SUBVERSION)
 #define MPI_SUBVERSION 0
 #endif
 #endif
 
-#ifdef PyMPI_MISSING_MPI_Get_version
+#ifndef PyMPI_HAVE_MPI_Get_version
 static int PyMPI_Get_version(int *version, int* subversion)
 {
   if (!version)    return MPI_ERR_ARG;
@@ -54,11 +63,32 @@ static int PyMPI_Get_version(int *version, int* subversion)
 #define MPI_Get_version PyMPI_Get_version
 #endif
 
+#ifndef PyMPI_HAVE_MPI_Get_library_version
+#define PyMPI_MAX_LIBRARY_VERSION_STRING 8
+static int PyMPI_Get_library_version(char version[], int *rlen)
+{
+  size_t l, n = PyMPI_MAX_LIBRARY_VERSION_STRING;
+  if (!version) return MPI_ERR_ARG; /* XXX */
+  if (!rlen)    return MPI_ERR_ARG; /* XXX */
+  l = PyMPI_snprintf(version, n, "MPI %d.%d",
+                     MPI_VERSION, MPI_SUBVERSION);
+  if (l >= n) return MPI_ERR_INTERN; /* XXX */
+  *rlen = (int) l;
+  return MPI_SUCCESS;
+}
+#undef  MPI_MAX_LIBRARY_VERSION_STRING
+#define MPI_MAX_LIBRARY_VERSION_STRING \
+        PyMPI_MAX_LIBRARY_VERSION_STRING
+#undef  MPI_Get_library_version
+#define MPI_Get_library_version \
+        PyMPI_Get_library_version
+#endif
+
 /* ---------------------------------------------------------------- */
 
 /* Threading Support */
 
-#ifdef PyMPI_MISSING_MPI_Init_thread
+#ifndef PyMPI_HAVE_MPI_Init_thread
 static int PyMPI_Init_thread(int *argc, char ***argv,
                              int required, int *provided)
 {
@@ -73,7 +103,7 @@ static int PyMPI_Init_thread(int *argc, char ***argv,
 #define MPI_Init_thread PyMPI_Init_thread
 #endif
 
-#ifdef PyMPI_MISSING_MPI_Query_thread
+#ifndef PyMPI_HAVE_MPI_Query_thread
 static int PyMPI_Query_thread(int *provided)
 {
   if (!provided) return MPI_ERR_ARG;
@@ -84,7 +114,7 @@ static int PyMPI_Query_thread(int *provided)
 #define MPI_Query_thread PyMPI_Query_thread
 #endif
 
-#ifdef PyMPI_MISSING_MPI_Is_thread_main
+#ifndef PyMPI_HAVE_MPI_Is_thread_main
 static int PyMPI_Is_thread_main(int *flag)
 {
   if (!flag) return MPI_ERR_ARG;
@@ -99,13 +129,13 @@ static int PyMPI_Is_thread_main(int *flag)
 
 /* Status */
 
-#ifdef PyMPI_MISSING_MPI_STATUS_IGNORE
+#ifndef PyMPI_HAVE_MPI_STATUS_IGNORE
 static MPI_Status PyMPI_STATUS_IGNORE;
 #undef MPI_STATUS_IGNORE
 #define MPI_STATUS_IGNORE ((MPI_Status*)(&PyMPI_STATUS_IGNORE))
 #endif
 
-#ifdef PyMPI_MISSING_MPI_STATUSES_IGNORE
+#ifndef PyMPI_HAVE_MPI_STATUSES_IGNORE
 #ifndef PyMPI_MPI_STATUSES_IGNORE_SIZE
 #if defined(__GNUC__) || defined(__ICC) || defined(__INTEL_COMPILER)
 #warning MPI_STATUSES_IGNORE will use static storage of size 4096
@@ -122,12 +152,12 @@ static MPI_Status PyMPI_STATUSES_IGNORE[PyMPI_MPI_STATUSES_IGNORE_SIZE];
 
 /* Datatypes */
 
-#ifdef PyMPI_MISSING_MPI_LONG_LONG
+#ifndef PyMPI_HAVE_MPI_LONG_LONG
 #undef  MPI_LONG_LONG
 #define MPI_LONG_LONG MPI_LONG_LONG_INT
 #endif
 
-#ifdef PyMPI_MISSING_MPI_Type_get_extent
+#ifndef PyMPI_HAVE_MPI_Type_get_extent
 static int PyMPI_Type_get_extent(MPI_Datatype datatype,
                                  MPI_Aint *lb, MPI_Aint *extent)
 {
@@ -142,7 +172,7 @@ static int PyMPI_Type_get_extent(MPI_Datatype datatype,
 #define MPI_Type_get_extent PyMPI_Type_get_extent
 #endif
 
-#ifdef PyMPI_MISSING_MPI_Type_dup
+#ifndef PyMPI_HAVE_MPI_Type_dup
 static int PyMPI_Type_dup(MPI_Datatype datatype, MPI_Datatype *newtype)
 {
   int ierr = MPI_SUCCESS;
@@ -156,15 +186,14 @@ static int PyMPI_Type_dup(MPI_Datatype datatype, MPI_Datatype *newtype)
 #define MPI_Type_dup PyMPI_Type_dup
 #endif
 
-#ifdef PyMPI_MISSING_MPI_Type_create_indexed_block
+#ifndef PyMPI_HAVE_MPI_Type_create_indexed_block
 static int PyMPI_Type_create_indexed_block(int count,
                                            int blocklength,
                                            int displacements[],
                                            MPI_Datatype oldtype,
                                            MPI_Datatype *newtype)
 {
-  int i, *blocklengths = 0;
-  int ierr = MPI_SUCCESS;
+  int i, *blocklengths = 0, ierr = MPI_SUCCESS;
   if (count > 0) {
     blocklengths = (int *) PyMPI_MALLOC(count*sizeof(int));
     if (!blocklengths) return MPI_ERR_INTERN;
@@ -176,6 +205,31 @@ static int PyMPI_Type_create_indexed_block(int count,
 }
 #undef  MPI_Type_create_indexed_block
 #define MPI_Type_create_indexed_block PyMPI_Type_create_indexed_block
+#undef  MPI_COMBINER_INDEXED_BLOCK
+#define MPI_COMBINER_INDEXED_BLOCK MPI_COMBINER_INDEXED
+#endif
+
+#ifndef PyMPI_HAVE_MPI_Type_create_hindexed_block
+static int PyMPI_Type_create_hindexed_block(int count,
+                                            int blocklength,
+                                            MPI_Aint displacements[],
+                                            MPI_Datatype oldtype,
+                                            MPI_Datatype *newtype)
+{
+  int i, *blocklengths = 0, ierr = MPI_SUCCESS;
+  if (count > 0) {
+    blocklengths = (int *) PyMPI_MALLOC(count*sizeof(int));
+    if (!blocklengths) return MPI_ERR_INTERN;
+  }
+  for (i=0; i<count; i++) blocklengths[i] = blocklength;
+  ierr = MPI_Type_create_hindexed(count,blocklengths,displacements,oldtype,newtype);
+  if (blocklengths) PyMPI_FREE(blocklengths);
+  return ierr;
+}
+#undef  MPI_Type_create_hindexed_block
+#define MPI_Type_create_hindexed_block PyMPI_Type_create_hindexed_block
+#undef  MPI_COMBINER_HINDEXED_BLOCK
+#define MPI_COMBINER_HINDEXED_BLOCK MPI_COMBINER_HINDEXED
 #endif
 
 /*
@@ -183,7 +237,7 @@ static int PyMPI_Type_create_indexed_block(int count,
  * mpich2-1.0.7/src/mpi/datatype/type_create_subarray.c
  *
  */
-#ifdef PyMPI_MISSING_MPI_Type_create_subarray
+#ifndef PyMPI_HAVE_MPI_Type_create_subarray
 
 #undef  PyMPI_CHKARG
 #define PyMPI_CHKARG(EXPR) if (!(EXPR)) return MPI_ERR_ARG
@@ -298,7 +352,7 @@ static int PyMPI_Type_create_subarray(int ndims,
  * mpich2-1.0.7/src/mpi/datatype/type_create_darray.c
  *
  */
-#ifdef PyMPI_MISSING_MPI_Type_create_darray
+#ifndef PyMPI_HAVE_MPI_Type_create_darray
 
 #undef  PyMPI_MIN
 #define PyMPI_MIN(__a, __b) (((__a) < (__b)) ? (__a) : (__b))
@@ -614,9 +668,93 @@ static int PyMPI_Type_create_darray(int size,
 #define MPI_Type_create_darray PyMPI_Type_create_darray
 #endif
 
+#ifndef PyMPI_HAVE_MPI_Type_size_x
+static int PyMPI_Type_size_x(MPI_Datatype datatype,
+                             MPI_Count *size)
+{
+  int ierr = MPI_SUCCESS;
+  int size_ = MPI_UNDEFINED;
+  ierr = MPI_Type_size(datatype, &size_);
+  if (ierr != MPI_SUCCESS) return ierr;
+  if (!size) return MPI_ERR_ARG; /* XXX */
+  *size = (MPI_Count) size_;
+  return MPI_SUCCESS;
+}
+#undef  MPI_Type_size_x
+#define MPI_Type_size_x PyMPI_Type_size_x
+#endif
+
+#ifndef PyMPI_HAVE_MPI_Type_get_extent_x
+static int PyMPI_Type_get_extent_x(MPI_Datatype datatype,
+                                   MPI_Count *lb,
+                                   MPI_Count *extent)
+{
+  int ierr = MPI_SUCCESS;
+  MPI_Aint lb_ = MPI_UNDEFINED, extent_ = MPI_UNDEFINED;
+  ierr = MPI_Type_get_extent(datatype, &lb_, &extent_);
+  if (ierr != MPI_SUCCESS) return ierr;
+  if (!lb)     return MPI_ERR_ARG; /* XXX */
+  if (!extent) return MPI_ERR_ARG; /* XXX */
+  *lb     = (MPI_Count) lb_;
+  *extent = (MPI_Count) extent_;
+  return MPI_SUCCESS;
+}
+#undef  MPI_Type_get_extent_x
+#define MPI_Type_get_extent_x PyMPI_Type_get_extent_x
+#endif
+
+#ifndef PyMPI_HAVE_MPI_Type_get_true_extent_x
+static int PyMPI_Type_get_true_extent_x(MPI_Datatype datatype,
+                                        MPI_Count *lb,
+                                        MPI_Count *extent)
+{
+  int ierr = MPI_SUCCESS;
+  MPI_Aint lb_ = MPI_UNDEFINED, extent_ = MPI_UNDEFINED;
+  ierr = MPI_Type_get_true_extent(datatype, &lb_, &extent_);
+  if (ierr != MPI_SUCCESS) return ierr;
+  if (!lb)     return MPI_ERR_ARG; /* XXX */
+  if (!extent) return MPI_ERR_ARG; /* XXX */
+  *lb     = (MPI_Count) lb_;
+  *extent = (MPI_Count) extent_;
+  return MPI_SUCCESS;
+}
+#undef  MPI_Type_get_true_extent_x
+#define MPI_Type_get_true_extent_x PyMPI_Type_get_true_extent_x
+#endif
+
+#ifndef PyMPI_HAVE_MPI_Get_elements_x
+static int PyMPI_Get_elements_x(MPI_Status *status,
+                                MPI_Datatype datatype,
+                                MPI_Count *elements)
+{
+  int ierr = MPI_SUCCESS;
+  int elements_ = MPI_UNDEFINED;
+  ierr = MPI_Get_elements(status, datatype, &elements_);
+  if (ierr != MPI_SUCCESS) return ierr;
+  if (!elements) return MPI_ERR_ARG; /* XXX */
+  *elements = (MPI_Count) elements_;
+  return MPI_SUCCESS;
+}
+#undef  MPI_Get_elements_x
+#define MPI_Get_elements_x PyMPI_Get_elements_x
+#endif
+
+#ifndef PyMPI_HAVE_MPI_Status_set_elements_x
+static int PyMPI_Status_set_elements_x(MPI_Status *status,
+                                       MPI_Datatype datatype,
+                                       MPI_Count elements)
+{
+  int elements_ = (int) elements;
+  if (elements != (MPI_Count) elements_) return MPI_ERR_ARG; /* XXX */
+  return MPI_Status_set_elements(status, datatype, elements_);
+}
+#undef  MPI_Status_set_elements_x
+#define MPI_Status_set_elements_x PyMPI_Status_set_elements_x
+#endif
+
 /* ---------------------------------------------------------------- */
 
-#ifndef PyMPI_MISSING_MPI_Request_get_status
+#ifdef PyMPI_HAVE_MPI_Request_get_status
 #if ((10 * MPI_VERSION + MPI_SUBVERSION) < 22)
 static int PyMPI_Request_get_status(MPI_Request request,
                                     int *flag, MPI_Status *status)
@@ -627,8 +765,8 @@ static int PyMPI_Request_get_status(MPI_Request request,
   if (status &&
       status != MPI_STATUS_IGNORE &&
       status != MPI_STATUSES_IGNORE) {
-    #if defined(PyMPI_MISSING_MPI_Status_set_cancelled) ||  \
-        defined(PyMPI_MISSING_MPI_Status_set_elements)
+    #if !defined(PyMPI_HAVE_MPI_Status_set_cancelled) || \
+        !defined(PyMPI_HAVE_MPI_Status_set_elements)
     int n = (int) sizeof(MPI_Status);
     unsigned char *p = (unsigned char *)status;
     while (n-- > 0) p[n] = 0;
@@ -636,10 +774,10 @@ static int PyMPI_Request_get_status(MPI_Request request,
     status->MPI_SOURCE = MPI_ANY_SOURCE;
     status->MPI_TAG    = MPI_ANY_TAG;
     status->MPI_ERROR  = MPI_SUCCESS;
-    #ifndef PyMPI_MISSING_MPI_Status_set_elements
+    #ifdef PyMPI_HAVE_MPI_Status_set_elements
     MPI_Status_set_elements(status, MPI_BYTE, 0);
     #endif
-    #ifndef PyMPI_MISSING_MPI_Status_set_cancelled
+    #ifdef PyMPI_HAVE_MPI_Status_set_cancelled
     MPI_Status_set_cancelled(status, 0);
     #endif
   }
@@ -652,7 +790,7 @@ static int PyMPI_Request_get_status(MPI_Request request,
 
 /* ---------------------------------------------------------------- */
 
-#ifdef PyMPI_MISSING_MPI_Reduce_scatter_block
+#ifndef PyMPI_HAVE_MPI_Reduce_scatter_block
 static int PyMPI_Reduce_scatter_block(void *sendbuf, void *recvbuf,
                                       int recvcount, MPI_Datatype datatype,
                                       MPI_Op op, MPI_Comm comm)
@@ -670,17 +808,63 @@ static int PyMPI_Reduce_scatter_block(void *sendbuf, void *recvbuf,
   PyMPI_FREE(recvcounts);
   return ierr;
 }
-
 #undef  MPI_Reduce_scatter_block
 #define MPI_Reduce_scatter_block PyMPI_Reduce_scatter_block
 #endif
 
 /* ---------------------------------------------------------------- */
 
+/* Communicator Info */
+
+#ifndef PyMPI_HAVE_MPI_Comm_dup_with_info
+static int PyMPI_Comm_dup_with_info(MPI_Comm comm, MPI_Info info,
+                                    MPI_Comm *newcomm)
+{
+  int dummy, ierr;
+  if (info != MPI_INFO_NULL) {
+    ierr = MPI_Info_get_nkeys(info, &dummy);
+    if (ierr != MPI_SUCCESS) return ierr;
+  }
+  return MPI_Comm_dup(comm, newcomm);
+}
+#undef  MPI_Comm_dup_with_info
+#define MPI_Comm_dup_with_info PyMPI_Comm_dup_with_info
+#endif
+
+#ifndef PyMPI_HAVE_MPI_Comm_set_info
+static int PyMPI_Comm_set_info(MPI_Comm comm, MPI_Info info)
+{
+  int dummy, ierr;
+  ierr = MPI_Comm_size(comm, &dummy);
+  if (ierr != MPI_SUCCESS) return ierr;
+  if (info != MPI_INFO_NULL) {
+    ierr = MPI_Info_get_nkeys(info, &dummy);
+    if (ierr != MPI_SUCCESS) return ierr;
+  }
+  return MPI_SUCCESS;
+}
+#undef  MPI_Comm_set_info
+#define MPI_Comm_set_info PyMPI_Comm_set_info
+#endif
+
+#ifndef PyMPI_HAVE_MPI_Comm_get_info
+static int PyMPI_Comm_get_info(MPI_Comm comm, MPI_Info *info)
+{
+  int dummy, ierr;
+  ierr = MPI_Comm_size(comm, &dummy);
+  if (ierr != MPI_SUCCESS) return ierr;
+  return MPI_Info_create(info);
+}
+#undef  MPI_Comm_get_info
+#define MPI_Comm_get_info PyMPI_Comm_get_info
+#endif
+
+/* ---------------------------------------------------------------- */
+
 /* Memory Allocation */
 
-#if (defined(PyMPI_MISSING_MPI_Alloc_mem) || \
-     defined(PyMPI_MISSING_MPI_Free_mem))
+#if !defined(PyMPI_HAVE_MPI_Alloc_mem) || \
+    !defined(PyMPI_HAVE_MPI_Free_mem)
 
 static int PyMPI_Alloc_mem(MPI_Aint size, MPI_Info info, void *baseptr)
 {
@@ -706,6 +890,77 @@ static int PyMPI_Free_mem(void *baseptr)
 #undef  MPI_Free_mem
 #define MPI_Free_mem PyMPI_Free_mem
 
+#endif
+
+/* ---------------------------------------------------------------- */
+
+#ifndef PyMPI_HAVE_MPI_Win_allocate
+#ifdef  PyMPI_HAVE_MPI_Win_create
+
+static int PyMPI_KEYVAL_WIN_MPIMEM = MPI_KEYVAL_INVALID;
+
+static int MPIAPI
+PyMPI_win_free_mpimem(PyMPI_UNUSED MPI_Win win,
+                      PyMPI_UNUSED int k, void *v,
+                      PyMPI_UNUSED void *xs)
+{
+  return MPI_Free_mem(v);
+}
+
+static int MPIAPI
+PyMPI_free_keyval_win(PyMPI_UNUSED MPI_Comm comm,
+                      PyMPI_UNUSED int k, void *v,
+                      PyMPI_UNUSED void *xs)
+{
+  int ierr = MPI_SUCCESS;
+  ierr = MPI_Win_free_keyval((int *)v);
+  if (ierr != MPI_SUCCESS) return ierr;
+  ierr = MPI_Comm_free_keyval(&k);
+  if (ierr != MPI_SUCCESS) return ierr;
+  return MPI_SUCCESS;
+}
+
+static int PyMPI_Win_allocate(MPI_Aint size, int disp_unit,
+                              MPI_Info info, MPI_Comm comm,
+                              void *baseptr_, MPI_Win *win_)
+{
+  int ierr = MPI_SUCCESS;
+  void *baseptr = MPI_BOTTOM;
+  MPI_Win win = MPI_WIN_NULL;
+  ierr = MPI_Alloc_mem(size?size:1, info, &baseptr);
+  if (ierr != MPI_SUCCESS) goto error;
+  ierr = MPI_Win_create(baseptr, size, disp_unit, info, comm, &win);
+  if (ierr != MPI_SUCCESS) goto error;
+#if defined(PyMPI_HAVE_MPI_Win_create_keyval) && \
+    defined(PyMPI_HAVE_MPI_Win_set_attr)
+  if (PyMPI_KEYVAL_WIN_MPIMEM == MPI_KEYVAL_INVALID) {
+    int comm_keyval = MPI_KEYVAL_INVALID;
+    ierr = MPI_Win_create_keyval(MPI_WIN_NULL_COPY_FN,
+                                 PyMPI_win_free_mpimem,
+                                 &PyMPI_KEYVAL_WIN_MPIMEM, NULL);
+    if (ierr != MPI_SUCCESS) goto error;
+    ierr = MPI_Comm_create_keyval(MPI_COMM_NULL_COPY_FN,
+                                  PyMPI_free_keyval_win,
+                                  &comm_keyval, NULL);
+    if (ierr == MPI_SUCCESS)
+      (void)MPI_Comm_set_attr(MPI_COMM_SELF, comm_keyval,
+                              &PyMPI_KEYVAL_WIN_MPIMEM);
+  }
+  ierr = MPI_Win_set_attr(win, PyMPI_KEYVAL_WIN_MPIMEM, baseptr);
+  if (ierr != MPI_SUCCESS) goto error;
+#endif
+  *((void**)baseptr_) = baseptr;
+  *win_ = win;
+  return MPI_SUCCESS;
+ error:
+  if (baseptr != MPI_BOTTOM) (void)MPI_Free_mem(baseptr);
+  if (win != MPI_WIN_NULL)   (void)MPI_Win_free(&win);
+  return ierr;
+}
+#undef  MPI_Win_allocate
+#define MPI_Win_allocate PyMPI_Win_allocate
+
+#endif
 #endif
 
 /* ---------------------------------------------------------------- */

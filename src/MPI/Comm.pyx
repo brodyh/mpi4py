@@ -15,6 +15,12 @@ GRAPH      = MPI_GRAPH      #: General graph topology
 DIST_GRAPH = MPI_DIST_GRAPH #: Distributed graph topology
 
 
+# Communicator Split Type
+# -----------------------
+
+COMM_TYPE_SHARED = MPI_COMM_TYPE_SHARED
+
+
 cdef class Comm:
 
     """
@@ -106,6 +112,77 @@ cdef class Comm:
         with nogil: CHKERR( MPI_Comm_dup(self.ob_mpi, &comm.ob_mpi) )
         return comm
 
+    def Dup(self, Info info=None):
+        """
+        Duplicate an existing communicator
+        """
+        cdef MPI_Info cinfo = arg_Info(info)
+        cdef Comm comm = <Comm>type(self)()
+        if info is None:
+            with nogil: CHKERR( MPI_Comm_dup(
+                self.ob_mpi, &comm.ob_mpi) )
+        else:
+            with nogil: CHKERR( MPI_Comm_dup_with_info(
+                self.ob_mpi, cinfo, &comm.ob_mpi) )
+        return comm
+
+    def Dup_with_info(self, Info info not None):
+        """
+        Duplicate an existing communicator
+        """
+        cdef Comm comm = <Comm>type(self)()
+        with nogil: CHKERR( MPI_Comm_dup_with_info(
+            self.ob_mpi, info.ob_mpi, &comm.ob_mpi) )
+        return comm
+
+    def Idup(self):
+        """
+        Nonblocking duplicate an existing communicator
+        """
+        cdef Comm comm = <Comm>type(self)()
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Comm_idup(
+            self.ob_mpi, &comm.ob_mpi, &request.ob_mpi) )
+        return (comm, request)
+
+    def Create(self, Group group not None):
+        """
+        Create communicator from group
+        """
+        cdef Comm comm = <Comm>type(self)()
+        with nogil: CHKERR( MPI_Comm_create(
+            self.ob_mpi, group.ob_mpi, &comm.ob_mpi) )
+        return comm
+
+    def Create_group(self, Group group not None, int tag=0):
+        """
+        Create communicator from group
+        """
+        cdef Comm comm = <Comm>type(self)()
+        with nogil: CHKERR( MPI_Comm_create_group(
+            self.ob_mpi, group.ob_mpi, tag, &comm.ob_mpi) )
+        return comm
+
+    def Split(self, int color=0, int key=0):
+        """
+        Split intracommunicator by color and key
+        """
+        cdef Comm comm = <Comm>type(self)()
+        with nogil: CHKERR( MPI_Comm_split(
+            self.ob_mpi, color, key, &comm.ob_mpi) )
+        return comm
+
+    def Split_type(self, int split_type, int key=0,
+                   Info info=INFO_NULL):
+        """
+        Split intracommunicator by color and key
+        """
+        cdef MPI_Info cinfo = arg_Info(info)
+        cdef Comm comm = <Comm>type(self)()
+        with nogil: CHKERR( MPI_Comm_split_type(
+            self.ob_mpi, split_type, key, cinfo, &comm.ob_mpi) )
+        return comm
+
     # Communicator Destructor
     # -----------------------
 
@@ -114,6 +191,27 @@ cdef class Comm:
         Free a communicator
         """
         with nogil: CHKERR( MPI_Comm_free(&self.ob_mpi) )
+
+    # Communicator Info
+    # -----------------
+
+    def Set_info(self, Info info not None):
+        """
+        Set new values for the hints
+        associated with a communicator
+        """
+        with nogil: CHKERR( MPI_Comm_set_info(
+            self.ob_mpi, info.ob_mpi) )
+
+    def Get_info(self):
+        """
+        Return the hints for a communicator
+        that are currently being used by MPI
+        """
+        cdef Info info = <Info>Info.__new__(Info)
+        with nogil: CHKERR( MPI_Comm_get_info(
+            self.ob_mpi, &info.ob_mpi) )
+        return info
 
     # Point to Point communication
     # ----------------------------
@@ -245,6 +343,35 @@ cdef class Comm:
         with nogil: CHKERR( MPI_Iprobe(
             source, tag, self.ob_mpi, &flag, statusp) )
         return <bint>flag
+
+    # Matching Probe
+    # --------------
+
+    def Mprobe(self, int source=0, int tag=0, Status status=None):
+        """
+        Blocking test for a message
+        """
+        cdef MPI_Message cmessage = MPI_MESSAGE_NULL
+        cdef MPI_Status *statusp = arg_Status(status)
+        with nogil: CHKERR( MPI_Mprobe(
+            source, tag, self.ob_mpi, &cmessage, statusp) )
+        cdef Message message = <Message>Message.__new__(Message)
+        message.ob_mpi = cmessage
+        return message
+
+    def Improbe(self, int source=0, int tag=0, Status status=None):
+        """
+        Nonblocking test for a message
+        """
+        cdef int flag = 0
+        cdef MPI_Message cmessage = MPI_MESSAGE_NULL
+        cdef MPI_Status *statusp = arg_Status(status)
+        with nogil: CHKERR( MPI_Improbe(
+             source, tag, self.ob_mpi, &flag, &cmessage, statusp) )
+        if flag == 0: return None
+        cdef Message message = <Message>Message.__new__(Message)
+        message.ob_mpi = cmessage
+        return message
 
     # Persistent Communication
     # ------------------------
@@ -511,15 +638,11 @@ cdef class Comm:
         Generalized All-to-All communication allowing different
         counts, displacements and datatypes for each partner
         """
-        sendbuf = recvbuf = None
-        raise NotImplementedError # XXX implement!
-        cdef void *sbuf = NULL, *rbuf = NULL
-        cdef int  *scounts = NULL, *rcounts = NULL
-        cdef int  *sdispls = NULL, *rdispls = NULL
-        cdef MPI_Datatype *stypes = NULL, *rtypes = NULL
+        cdef _p_msg_ccow m = message_ccow()
+        m.for_alltoallw(sendbuf, recvbuf, self.ob_mpi)
         with nogil: CHKERR( MPI_Alltoallw(
-            sbuf, scounts, sdispls, stypes,
-            rbuf, rcounts, rdispls, rtypes,
+            m.sbuf, m.scounts, m.sdispls, m.stypes,
+            m.rbuf, m.rcounts, m.rdispls, m.rtypes,
             self.ob_mpi) )
 
 
@@ -568,6 +691,206 @@ cdef class Comm:
         with nogil: CHKERR( MPI_Reduce_scatter(
             m.sbuf, m.rbuf, m.rcounts, m.rtype,
             op.ob_mpi, self.ob_mpi) )
+
+    # Nonblocking Collectives
+    # -----------------------
+
+    def Ibarrier(self):
+        """
+        Nonblocking Barrier
+        """
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ibarrier(self.ob_mpi, &request.ob_mpi) )
+        return request
+
+    def Ibcast(self, buf, int root=0):
+        """
+        Nonblocking Broadcast
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_bcast(buf, root, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ibcast(
+            m.sbuf, m.scount, m.stype,
+            root, self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Igather(self, sendbuf, recvbuf, int root=0):
+        """
+        Nonblocking Gather
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_gather(0, sendbuf, recvbuf, root, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Igather(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            root, self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Igatherv(self, sendbuf, recvbuf, int root=0):
+        """
+        Nonblocking Gather Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_gather(1, sendbuf, recvbuf, root, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Igatherv(
+            m.sbuf, m.scount,             m.stype,
+            m.rbuf, m.rcounts, m.rdispls, m.rtype,
+            root, self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Iscatter(self, sendbuf, recvbuf, int root=0):
+        """
+        Nonblocking Scatter
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_scatter(0, sendbuf, recvbuf, root, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Iscatter(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            root, self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Iscatterv(self, sendbuf, recvbuf, int root=0):
+        """
+        Nonblocking Scatter Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_scatter(1, sendbuf, recvbuf, root, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Iscatterv(
+            m.sbuf, m.scounts, m.sdispls, m.stype,
+            m.rbuf, m.rcount,             m.rtype,
+            root, self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Iallgather(self, sendbuf, recvbuf):
+        """
+        Nonblocking Gather to All
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_allgather(0, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Iallgather(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Iallgatherv(self, sendbuf, recvbuf):
+        """
+        Nonblocking Gather to All Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_allgather(1, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Iallgatherv(
+            m.sbuf, m.scount,             m.stype,
+            m.rbuf, m.rcounts, m.rdispls, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        return request
+
+    def Ialltoall(self, sendbuf, recvbuf):
+        """
+        Nonblocking All to All Scatter/Gather
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_alltoall(0, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ialltoall(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Ialltoallv(self, sendbuf, recvbuf):
+        """
+        Nonblocking All to All Scatter/Gather Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_alltoall(1, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ialltoallv(
+            m.sbuf, m.scounts, m.sdispls, m.stype,
+            m.rbuf, m.rcounts, m.rdispls, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Ialltoallw(self, sendbuf, recvbuf):
+        """
+        Nonblocking Generalized All-to-All
+        """
+        cdef _p_msg_ccow m = message_ccow()
+        m.for_alltoallw(sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ialltoallw(
+            m.sbuf, m.scounts, m.sdispls, m.stypes,
+            m.rbuf, m.rcounts, m.rdispls, m.rtypes,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Ireduce(self, sendbuf, recvbuf, Op op not None=SUM, int root=0):
+        """
+        Nonblocking Reduce
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_reduce(sendbuf, recvbuf, root, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ireduce(
+            m.sbuf, m.rbuf, m.rcount, m.rtype,
+            op.ob_mpi, root, self.ob_mpi, &request.ob_mpi) )
+        return request
+
+    def Iallreduce(self, sendbuf, recvbuf, Op op not None=SUM):
+        """
+        Nonblocking All Reduce
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_allreduce(sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Iallreduce(
+            m.sbuf, m.rbuf, m.rcount, m.rtype,
+            op.ob_mpi, self.ob_mpi, &request.ob_mpi) )
+        return request
+
+    def Ireduce_scatter_block(self, sendbuf, recvbuf,
+                             Op op not None=SUM):
+        """
+        Nonblocking Reduce-Scatter Block (regular, non-vector version)
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_reduce_scatter_block(sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ireduce_scatter_block(
+            m.sbuf, m.rbuf, m.rcount, m.rtype,
+            op.ob_mpi, self.ob_mpi, &request.ob_mpi) )
+        return request
+
+    def Ireduce_scatter(self, sendbuf, recvbuf, recvcounts=None,
+                       Op op not None=SUM):
+        """
+        Nonblocking Reduce-Scatter (vector version)
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_reduce_scatter(sendbuf, recvbuf,
+                             recvcounts, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ireduce_scatter(
+            m.sbuf, m.rbuf, m.rcounts, m.rtype,
+            op.ob_mpi, self.ob_mpi, &request.ob_mpi) )
+        return request
 
     # Tests
     # -----
@@ -853,6 +1176,24 @@ cdef class Comm:
         request.ob_buf = PyMPI_irecv(obj, dest, tag, comm, &request.ob_mpi)
         return request
     #
+    def mprobe(self, int source=0, int tag=0, Status status=None):
+        cdef MPI_Comm comm = self.ob_mpi
+        cdef MPI_Status *statusp = arg_Status(status)
+        cdef Message message = <Message>Message.__new__(Message)
+        message.ob_buf = PyMPI_mprobe(source, tag, comm,
+                                      &message.ob_mpi, statusp)
+        return message
+    #
+    def improbe(self, int source=0, int tag=0, Status status=None):
+        cdef int flag = 0
+        cdef MPI_Comm comm = self.ob_mpi
+        cdef MPI_Status *statusp = arg_Status(status)
+        cdef Message message = <Message>Message.__new__(Message)
+        message.ob_buf = PyMPI_improbe(source, tag, comm, &flag,
+                                       &message.ob_mpi, statusp)
+        if flag == 0: return None
+        return message
+    #
     def barrier(self):
         "Barrier"
         cdef MPI_Comm comm = self.ob_mpi
@@ -912,41 +1253,17 @@ cdef class Intracomm(Comm):
     # Communicator Constructors
     # -------------------------
 
-    def Dup(self):
-        """
-        Duplicate an existing intracommunicator
-        """
-        cdef Intracomm comm = <Intracomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_dup(self.ob_mpi, &comm.ob_mpi) )
-        return comm
-
-    def Create(self, Group group not None):
-        """
-        Create intracommunicator from group
-        """
-        cdef Intracomm comm = <Intracomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_create(
-            self.ob_mpi, group.ob_mpi, &comm.ob_mpi) )
-        return comm
-
-    def Split(self, int color=0, int key=0):
-        """
-        Split intracommunicator by color and key
-        """
-        cdef Intracomm comm = <Intracomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_split(
-            self.ob_mpi, color, key, &comm.ob_mpi) )
-        return comm
-
     def Create_cart(self, dims, periods=None, bint reorder=False):
         """
         Create cartesian communicator
         """
-        cdef int ndims = 0, *idims = NULL
-        dims = getarray_int(dims, &ndims, &idims)
-        if periods is None: periods = [False] * ndims
+        cdef int ndims = 0
+        ndims = <int>len(dims)
+        cdef int *idims = NULL
+        dims = asarray_int(dims, ndims, &idims)
         cdef int *iperiods = NULL
-        periods = chkarray_int(periods, ndims, &iperiods)
+        if periods is None: periods = [False] * ndims
+        periods = asarray_int(periods, ndims, &iperiods)
         #
         cdef Cartcomm comm = <Cartcomm>Cartcomm.__new__(Cartcomm)
         with nogil: CHKERR( MPI_Cart_create(
@@ -982,13 +1299,12 @@ cdef class Intracomm(Comm):
         cdef int *idestweight   = MPI_UNWEIGHTED
         if sources is not None:
             sources = getarray_int(sources, &indegree, &isource)
-        if sourceweights is not None:
-            sourceweights = chkarray_int(
-                sourceweights, indegree, &isourceweight)
+        sourceweights = asarray_weights(
+            sourceweights, indegree, &isourceweight)
         if destinations is not None:
             destinations = getarray_int(destinations, &outdegree, &idest)
-        if destweights is not None:
-            destweights = chkarray_int(destweights, outdegree, &idestweight)
+        destweights = asarray_weights(
+            destweights, outdegree, &idestweight)
         cdef MPI_Info cinfo = arg_Info(info)
         #
         cdef Distgraphcomm comm = \
@@ -1008,12 +1324,12 @@ cdef class Intracomm(Comm):
         cdef int nv = 0, ne = 0, i = 0
         cdef int *isource = NULL, *idegree = NULL,
         cdef int *idest = NULL, *iweight = MPI_UNWEIGHTED
-        sources = getarray_int(sources, &nv, &isource)
-        degrees = chkarray_int(degrees,  nv, &idegree)
+        nv = <int>len(sources)
+        sources = asarray_int(sources, nv, &isource)
+        degrees = asarray_int(degrees, nv, &idegree)
         for i from 0 <= i < nv: ne += idegree[i]
-        destinations = chkarray_int(destinations, ne, &idest)
-        if weights is not None:
-            weights = chkarray_int(weights, ne, &iweight)
+        destinations = asarray_int(destinations, ne, &idest)
+        weights = asarray_weights(weights, ne, &iweight)
         cdef MPI_Info cinfo = arg_Info(info)
         #
         cdef Distgraphcomm comm = \
@@ -1066,6 +1382,32 @@ cdef class Intracomm(Comm):
             m.sbuf, m.rbuf, m.rcount, m.rtype,
             op.ob_mpi, self.ob_mpi) )
 
+    # Nonblocking
+
+    def Iscan(self, sendbuf, recvbuf, Op op not None=SUM):
+        """
+        Inclusive Scan
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_scan(sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Iscan(
+            m.sbuf, m.rbuf, m.rcount, m.rtype,
+            op.ob_mpi, self.ob_mpi, &request.ob_mpi) )
+        return request
+
+    def Iexscan(self, sendbuf, recvbuf, Op op not None=SUM):
+        """
+        Inclusive Scan
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_exscan(sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Iexscan(
+            m.sbuf, m.rbuf, m.rcount, m.rtype,
+            op.ob_mpi, self.ob_mpi, &request.ob_mpi) )
+        return request
+
     # Python Communication
     #
     def scan(self, sendobj=None, recvobj=None, op=SUM):
@@ -1080,6 +1422,147 @@ cdef class Intracomm(Comm):
         cdef MPI_Comm comm = self.ob_mpi
         return PyMPI_exscan(sendobj, recvobj, op, comm)
 
+    # Neighborhood Collectives
+    # ------------------------
+
+    def Neighbor_allgather(self, sendbuf, recvbuf):
+        """
+        Neighbor Gather to All
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_allgather(0, sendbuf, recvbuf, self.ob_mpi)
+        with nogil: CHKERR( MPI_Neighbor_allgather(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            self.ob_mpi) )
+
+    def Neighbor_allgatherv(self, sendbuf, recvbuf):
+        """
+        Neighbor Gather to All Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_allgather(1, sendbuf, recvbuf, self.ob_mpi)
+        with nogil: CHKERR( MPI_Neighbor_allgatherv(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcounts, m.rdispls, m.rtype,
+            self.ob_mpi) )
+
+    def Neighbor_alltoall(self, sendbuf, recvbuf):
+        """
+        Neighbor All-to-All
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_alltoall(0, sendbuf, recvbuf, self.ob_mpi)
+        with nogil: CHKERR( MPI_Neighbor_alltoall(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            self.ob_mpi) )
+
+    def Neighbor_alltoallv(self, sendbuf, recvbuf):
+        """
+        Neighbor All-to-All Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_alltoall(1, sendbuf, recvbuf, self.ob_mpi)
+        with nogil: CHKERR( MPI_Neighbor_alltoallv(
+            m.sbuf, m.scounts, m.sdispls, m.stype,
+            m.rbuf, m.rcounts, m.rdispls, m.rtype,
+            self.ob_mpi) )
+
+    def Neighbor_alltoallw(self, sendbuf, recvbuf):
+        """
+        Neighbor All-to-All Generalized
+        """
+        cdef _p_msg_ccow m = message_ccow()
+        m.for_neighbor_alltoallw(sendbuf, recvbuf, self.ob_mpi)
+        with nogil: CHKERR( MPI_Neighbor_alltoallw(
+            m.sbuf, m.scounts, m.sdisplsA, m.stypes,
+            m.rbuf, m.rcounts, m.rdisplsA, m.rtypes,
+            self.ob_mpi) )
+
+    # Nonblocking Neighborhood Collectives
+
+    def Ineighbor_allgather(self, sendbuf, recvbuf):
+        """
+        Nonblocking Neighbor Gather to All
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_allgather(0, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ineighbor_allgather(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Ineighbor_allgatherv(self, sendbuf, recvbuf):
+        """
+        Nonblocking Neighbor Gather to All Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_allgather(1, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ineighbor_allgatherv(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcounts, m.rdispls, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Ineighbor_alltoall(self, sendbuf, recvbuf):
+        """
+        Nonblocking Neighbor All-to-All
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_alltoall(0, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ineighbor_alltoall(
+            m.sbuf, m.scount, m.stype,
+            m.rbuf, m.rcount, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Ineighbor_alltoallv(self, sendbuf, recvbuf):
+        """
+        Nonblocking Neighbor All-to-All Vector
+        """
+        cdef _p_msg_cco m = message_cco()
+        m.for_neighbor_alltoall(1, sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ineighbor_alltoallv(
+            m.sbuf, m.scounts, m.sdispls, m.stype,
+            m.rbuf, m.rcounts, m.rdispls, m.rtype,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    def Ineighbor_alltoallw(self, sendbuf, recvbuf):
+        """
+        Nonblocking Neighbor All-to-All Generalized
+        """
+        cdef _p_msg_ccow m = message_ccow()
+        m.for_neighbor_alltoallw(sendbuf, recvbuf, self.ob_mpi)
+        cdef Request request = <Request>Request.__new__(Request)
+        with nogil: CHKERR( MPI_Ineighbor_alltoallw(
+            m.sbuf, m.scounts, m.sdisplsA, m.stypes,
+            m.rbuf, m.rcounts, m.rdisplsA, m.rtypes,
+            self.ob_mpi, &request.ob_mpi) )
+        request.ob_buf = m
+        return request
+
+    # Python Communication
+    #
+    def neighbor_allgather(self, sendobj=None, recvobj=None):
+        """Neighbor Gather to All"""
+        cdef MPI_Comm comm = self.ob_mpi
+        return PyMPI_neighbor_allgather(sendobj, recvobj, comm)
+    #
+    def neighbor_alltoall(self, sendobj=None, recvobj=None):
+        """Neighbor All to All Scatter/Gather"""
+        cdef MPI_Comm comm = self.ob_mpi
+        return PyMPI_neighbor_alltoall(sendobj, recvobj, comm)
 
     # Establishing Communication
     # --------------------------
@@ -1104,7 +1587,7 @@ cdef class Intracomm(Comm):
             if args is not None:
                 tmp1 = asarray_argv(args, &argv)
         if errcodes is not None:
-            tmp2 = newarray_int(maxprocs, &ierrcodes)
+            tmp2 = mkarray_int(maxprocs, &ierrcodes)
         #
         cdef Intercomm comm = <Intercomm>Intercomm.__new__(Intercomm)
         with nogil: CHKERR( MPI_Comm_spawn(
@@ -1131,7 +1614,7 @@ cdef class Intracomm(Comm):
         #
         cdef int rank = MPI_UNDEFINED
         CHKERR( MPI_Comm_rank(self.ob_mpi, &rank) )
-        cdef object tmp1, tmp2, tmp3, tmp4, tmp5
+        cdef tmp1, tmp2, tmp3, tmp4, tmp5
         cdef Py_ssize_t i=0, n=0
         if root == rank:
             count = <int>len(command)
@@ -1145,7 +1628,7 @@ cdef class Intracomm(Comm):
                 tmp3 = asarray_nprocs(maxprocs, count, &imaxprocs)
             for i from 0 <= i < count:
                 n += imaxprocs[i]
-            tmp5 = newarray_int(n, &ierrcodes)
+            tmp5 = mkarray_int(n, &ierrcodes)
         #
         cdef Intercomm comm = <Intercomm>Intercomm.__new__(Intercomm)
         with nogil: CHKERR( MPI_Comm_spawn_multiple(
@@ -1216,17 +1699,6 @@ cdef class Cartcomm(Intracomm):
             if topo != MPI_CART: raise TypeError(
                 "expecting a Cartesian communicator")
 
-    # Communicator Constructors
-    # -------------------------
-
-    def Dup(self):
-        """
-        Duplicate an existing communicator
-        """
-        cdef Cartcomm comm = <Cartcomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_dup(self.ob_mpi, &comm.ob_mpi) )
-        return comm
-
     # Cartesian Inquiry Functions
     # ---------------------------
 
@@ -1255,11 +1727,11 @@ cdef class Cartcomm(Intracomm):
         cdef int ndim = 0
         CHKERR( MPI_Cartdim_get(self.ob_mpi, &ndim) )
         cdef int *idims = NULL
-        cdef tmp1 = newarray_int(ndim, &idims)
+        cdef tmp1 = mkarray_int(ndim, &idims)
         cdef int *iperiods = NULL
-        cdef tmp2 = newarray_int(ndim, &iperiods)
+        cdef tmp2 = mkarray_int(ndim, &iperiods)
         cdef int *icoords = NULL
-        cdef tmp3 = newarray_int(ndim, &icoords)
+        cdef tmp3 = mkarray_int(ndim, &icoords)
         CHKERR( MPI_Cart_get(self.ob_mpi, ndim, idims, iperiods, icoords) )
         cdef int i = 0
         cdef object dims    = [idims[i]    for i from 0 <= i < ndim]
@@ -1297,7 +1769,7 @@ cdef class Cartcomm(Intracomm):
         """
         cdef int ndim = 0, *icoords = NULL
         CHKERR( MPI_Cartdim_get( self.ob_mpi, &ndim) )
-        coords = chkarray_int(coords, ndim, &icoords)
+        coords = asarray_int(coords, ndim, &icoords)
         cdef int rank = MPI_PROC_NULL
         CHKERR( MPI_Cart_rank(self.ob_mpi, icoords, &rank) )
         return rank
@@ -1306,10 +1778,11 @@ cdef class Cartcomm(Intracomm):
         """
         Translate ranks to logical coordinates
         """
-        cdef int ndim = 0, *icoords = NULL
+        cdef int i = 0, ndim = 0, *icoords = NULL
         CHKERR( MPI_Cartdim_get(self.ob_mpi, &ndim) )
-        cdef object coords = newarray_int(ndim, &icoords)
+        cdef tmp = mkarray_int(ndim, &icoords)
         CHKERR( MPI_Cart_coords(self.ob_mpi, rank, ndim, icoords) )
+        cdef object coords = [icoords[i] for i from 0 <= i < ndim]
         return coords
 
     # Cartesian Shift Function
@@ -1334,7 +1807,7 @@ cdef class Cartcomm(Intracomm):
         """
         cdef int ndim = 0, *iremdims = NULL
         CHKERR( MPI_Cartdim_get(self.ob_mpi, &ndim) )
-        remain_dims = chkarray_int(remain_dims, ndim, &iremdims)
+        remain_dims = asarray_int(remain_dims, ndim, &iremdims)
         cdef Cartcomm comm = <Cartcomm>Cartcomm.__new__(Cartcomm)
         with nogil: CHKERR( MPI_Cart_sub(self.ob_mpi, iremdims, &comm.ob_mpi) )
         return comm
@@ -1349,9 +1822,10 @@ cdef class Cartcomm(Intracomm):
         calling process on the physical machine
         """
         cdef int ndims = 0, *idims = NULL, *iperiods = NULL
-        dims = getarray_int(dims, &ndims, &idims)
+        ndims = <int>len(dims)
+        dims = asarray_int(dims, ndims, &idims)
         if periods is None: periods = [False] * ndims
-        periods = chkarray_int(periods, ndims, &iperiods)
+        periods = asarray_int(periods, ndims, &iperiods)
         cdef int rank = MPI_PROC_NULL
         CHKERR( MPI_Cart_map(self.ob_mpi, ndims, idims, iperiods, &rank) )
         return rank
@@ -1364,14 +1838,15 @@ def Compute_dims(int nnodes, dims):
     Return a balanced distribution of
     processes per coordinate direction
     """
-    cdef int ndims=0, *idims = NULL
+    cdef int i = 0, ndims = 0, *idims = NULL
     try:
         ndims = <int>len(dims)
     except:
         ndims = dims
         dims = [0] * ndims
-    dims = chkarray_int(dims, ndims, &idims)
+    cdef tmp = asarray_int(dims, ndims, &idims)
     CHKERR( MPI_Dims_create(nnodes, ndims, idims) )
+    dims = [idims[i] for i from 0 <= i < ndims]
     return dims
 
 
@@ -1387,18 +1862,6 @@ cdef class Graphcomm(Intracomm):
             CHKERR( MPI_Topo_test(self.ob_mpi, &topo) )
             if topo != MPI_GRAPH: raise TypeError(
                 "expecting a general graph communicator")
-
-    # Communicator Constructors
-    # -------------------------
-
-    def Dup(self):
-        """
-        Duplicate an existing communicator
-        """
-        cdef Graphcomm comm = <Graphcomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_dup(
-            self.ob_mpi, &comm.ob_mpi) )
-        return comm
 
     # Graph Inquiry Functions
     # -----------------------
@@ -1433,9 +1896,9 @@ cdef class Graphcomm(Intracomm):
         cdef int nindex = 0, nedges = 0
         CHKERR( MPI_Graphdims_get( self.ob_mpi, &nindex, &nedges) )
         cdef int *iindex = NULL
-        cdef tmp1 = newarray_int(nindex, &iindex)
+        cdef tmp1 = mkarray_int(nindex, &iindex)
         cdef int *iedges = NULL
-        cdef tmp2 = newarray_int(nedges, &iedges)
+        cdef tmp2 = mkarray_int(nedges, &iedges)
         CHKERR( MPI_Graph_get(self.ob_mpi, nindex, nedges, iindex, iedges) )
         cdef int i = 0
         cdef object index = [iindex[i] for i from 0 <= i < nindex]
@@ -1478,14 +1941,12 @@ cdef class Graphcomm(Intracomm):
         """
         Return list of neighbors of a process
         """
-        cdef int nneighbors = 0
+        cdef int i = 0, nneighbors = 0, *ineighbors = NULL
         CHKERR( MPI_Graph_neighbors_count(
                 self.ob_mpi, rank, &nneighbors) )
-        cdef int *ineighbors = NULL
-        cdef tmp = newarray_int(nneighbors, &ineighbors)
+        cdef tmp = mkarray_int(nneighbors, &ineighbors)
         CHKERR( MPI_Graph_neighbors(
                 self.ob_mpi, rank, nneighbors, ineighbors) )
-        cdef int i = 0
         cdef object neighbors = [ineighbors[i] for i from 0 <= i < nneighbors]
         return neighbors
 
@@ -1528,18 +1989,6 @@ cdef class Distgraphcomm(Intracomm):
             if topo != MPI_DIST_GRAPH: raise TypeError(
                 "expecting a distributed graph communicator")
 
-    # Communicator Constructors
-    # -------------------------
-
-    def Dup(self):
-        """
-        Duplicate an existing communicator
-        """
-        cdef Distgraphcomm comm = <Distgraphcomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_dup(
-            self.ob_mpi, &comm.ob_mpi) )
-        return comm
-
     # Topology Inquiry Functions
     # --------------------------
 
@@ -1566,13 +2015,13 @@ cdef class Distgraphcomm(Intracomm):
         cdef int *sourceweights = MPI_UNWEIGHTED
         cdef int *destweights   = MPI_UNWEIGHTED
         cdef tmp1, tmp2, tmp3, tmp4
-        tmp1 = newarray_int(maxindegree,  &sources)
-        tmp2 = newarray_int(maxoutdegree, &destinations)
+        tmp1 = mkarray_int(maxindegree,  &sources)
+        tmp2 = mkarray_int(maxoutdegree, &destinations)
         cdef int i = 0
         if weighted:
-            tmp3 = newarray_int(maxindegree,  &sourceweights)
+            tmp3 = mkarray_int(maxindegree,  &sourceweights)
             for i from 0 <= i < maxindegree:  sourceweights[i] = 1
-            tmp4 = newarray_int(maxoutdegree, &destweights)
+            tmp4 = mkarray_int(maxoutdegree, &destweights)
             for i from 0 <= i < maxoutdegree: destweights[i]   = 1
         #
         CHKERR( MPI_Dist_graph_neighbors(
@@ -1634,32 +2083,6 @@ cdef class Intercomm(Comm):
 
     # Communicator Constructors
     # -------------------------
-
-    def Dup(self):
-        """
-        Duplicate an existing intercommunicator
-        """
-        cdef Intercomm comm = <Intercomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_dup(self.ob_mpi, &comm.ob_mpi) )
-        return comm
-
-    def Create(self, Group group not None):
-        """
-        Create intercommunicator from group
-        """
-        cdef Intercomm comm = <Intercomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_create(
-            self.ob_mpi, group.ob_mpi, &comm.ob_mpi) )
-        return comm
-
-    def Split(self, int color=0, int key=0):
-        """
-        Split intercommunicator by color and key
-        """
-        cdef Intercomm comm = <Intercomm>type(self)()
-        with nogil: CHKERR( MPI_Comm_split(
-            self.ob_mpi, color, key, &comm.ob_mpi) )
-        return comm
 
     def Merge(self, bint high=False):
         """

@@ -4,7 +4,7 @@ from mpi4py import MPI
 
 def osu_alltoall(
     BENCHMARH = "MPI All-to-All Latency Test",
-    skip = 300,
+    skip = 200,
     loop = 1000,
     skip_large = 10,
     loop_large = 100,
@@ -24,11 +24,7 @@ def osu_alltoall(
     if myid == 0:
         print ('# %-8s%20s' % ("Size [B]", "Latency [us]"))
 
-    comm.Barrier()
-    message_sizes = [0] + [2**i for i in range(30)]
-    for size in message_sizes:
-        if size > MAX_MSG_SIZE:
-            break
+    for size in message_sizes(MAX_MSG_SIZE):
         if size > large_message_size:
             skip = skip_large
             loop = loop_large
@@ -36,17 +32,22 @@ def osu_alltoall(
         s_msg = [s_buf, size, MPI.BYTE]
         r_msg = [r_buf, size, MPI.BYTE]
         #
-        #comm.Barrier()
+        comm.Barrier()
         for i in iterations:
             if i == skip:
                 t_start = MPI.Wtime()
             comm.Alltoall(s_msg, r_msg)
-            t_end = MPI.Wtime()
+        t_end = MPI.Wtime()
+        comm.Barrier()
         #
         if myid == 0:
-            latency = (t_end - t_start) * 1e6 / (2 * loop)
+            latency = (t_end - t_start) * 1e6 / loop
             print ('%-10d%20.2f' % (size, latency))
 
+
+def message_sizes(max_size):
+    return [0] + [(1<<i) for i in range(30)
+                  if (1<<i) <= max_size]
 
 def allocate(n):
     try:

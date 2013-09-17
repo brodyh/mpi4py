@@ -22,6 +22,11 @@ class TestEnviron(unittest.TestCase):
         self.assertTrue(type(minor) is int)
         self.assertTrue(minor >= 0)
 
+    def testGetLibraryVersion(self):
+        version = MPI.Get_library_version()
+        self.assertTrue(isinstance(version, str))
+        self.assertTrue(len(version) > 0)
+
     def testGetProcessorName(self):
         procname = MPI.Get_processor_name()
         self.assertTrue(isinstance(procname, str))
@@ -85,8 +90,7 @@ class TestWorldAttrs(unittest.TestCase):
         self.assertTrue(lastuc >= 0)
 
 _name, _version = MPI.get_vendor()
-if (_name == 'MPICH2' and
-    _version > (1, 2)):
+if (_name in ('MPICH', 'MPICH2') and _version > (1, 2)):
     # Up to mpich2-1.3.1 when running under Hydra process manager,
     # getting the universe size fails for the singleton init case
     if MPI.COMM_WORLD.Get_attr(MPI.APPNUM) is None:

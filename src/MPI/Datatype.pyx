@@ -34,6 +34,7 @@ COMBINER_INDEXED          = MPI_COMBINER_INDEXED
 COMBINER_HINDEXED_INTEGER = MPI_COMBINER_HINDEXED_INTEGER #: from Fortran call
 COMBINER_HINDEXED         = MPI_COMBINER_HINDEXED
 COMBINER_INDEXED_BLOCK    = MPI_COMBINER_INDEXED_BLOCK
+COMBINER_HINDEXED_BLOCK   = MPI_COMBINER_HINDEXED_BLOCK
 COMBINER_STRUCT           = MPI_COMBINER_STRUCT
 COMBINER_STRUCT_INTEGER   = MPI_COMBINER_STRUCT_INTEGER   #: from Fortran call
 COMBINER_SUBARRAY         = MPI_COMBINER_SUBARRAY
@@ -50,8 +51,10 @@ cdef class Datatype:
     Datatype
     """
 
-    def __cinit__(self):
+    def __cinit__(self, Datatype datatype=None):
         self.ob_mpi = MPI_DATATYPE_NULL
+        if datatype is not None:
+            self.ob_mpi = datatype.ob_mpi
 
     def __dealloc__(self):
         if not (self.flags & PyMPI_OWNED): return
@@ -71,50 +74,50 @@ cdef class Datatype:
     # Datatype Accessors
     # ------------------
 
-    def Get_extent(self):
-        """
-        Return lower bound and extent of datatype
-        """
-        cdef MPI_Aint lb = 0, extent = 0
-        CHKERR( MPI_Type_get_extent(self.ob_mpi, &lb, &extent) )
-        return (lb, extent)
-
-    property extent:
-        """extent"""
-        def __get__(self):
-            cdef MPI_Aint lb = 0, extent = 0
-            CHKERR( MPI_Type_get_extent(self.ob_mpi, &lb, &extent) )
-            return extent
-
-    property lb:
-        """lower bound"""
-        def __get__(self):
-            cdef MPI_Aint lb = 0, extent = 0
-            CHKERR( MPI_Type_get_extent(self.ob_mpi, &lb, &extent) )
-            return lb
-
-    property ub:
-        """upper bound"""
-        def __get__(self):
-            cdef MPI_Aint lb = 0, extent = 0
-            CHKERR( MPI_Type_get_extent(self.ob_mpi, &lb, &extent) )
-            return lb + extent
-
     def Get_size(self):
         """
         Return the number of bytes occupied
         by entries in the datatype
         """
-        cdef int size = 0
-        CHKERR( MPI_Type_size(self.ob_mpi, &size) )
+        cdef MPI_Count size = 0
+        CHKERR( MPI_Type_size_x(self.ob_mpi, &size) )
         return size
 
     property size:
         """size (in bytes)"""
         def __get__(self):
-            cdef int size = 0
-            CHKERR( MPI_Type_size(self.ob_mpi, &size) )
+            cdef MPI_Count size = 0
+            CHKERR( MPI_Type_size_x(self.ob_mpi, &size) )
             return size
+
+    def Get_extent(self):
+        """
+        Return lower bound and extent of datatype
+        """
+        cdef MPI_Count lb = 0, extent = 0
+        CHKERR( MPI_Type_get_extent_x(self.ob_mpi, &lb, &extent) )
+        return (lb, extent)
+
+    property extent:
+        """extent"""
+        def __get__(self):
+            cdef MPI_Count lb = 0, extent = 0
+            CHKERR( MPI_Type_get_extent_x(self.ob_mpi, &lb, &extent) )
+            return extent
+
+    property lb:
+        """lower bound"""
+        def __get__(self):
+            cdef MPI_Count lb = 0, extent = 0
+            CHKERR( MPI_Type_get_extent_x(self.ob_mpi, &lb, &extent) )
+            return lb
+
+    property ub:
+        """upper bound"""
+        def __get__(self):
+            cdef MPI_Count lb = 0, extent = 0
+            CHKERR( MPI_Type_get_extent_x(self.ob_mpi, &lb, &extent) )
+            return lb + extent
 
     # Datatype Constructors
     # ---------------------
@@ -170,20 +173,6 @@ cdef class Datatype:
                                  self.ob_mpi, &datatype.ob_mpi) )
         return datatype
 
-    def Create_indexed_block(self, int blocklength, displacements):
-        """
-        Create an indexed datatype
-        with constant-sized blocks
-        """
-        cdef int count = 0, *idisp = NULL
-        displacements = getarray_int(displacements, &count, &idisp)
-        #
-        cdef Datatype datatype = <Datatype>type(self)()
-        CHKERR( MPI_Type_create_indexed_block(count, blocklength,
-                                              idisp, self.ob_mpi,
-                                              &datatype.ob_mpi) )
-        return datatype
-
     def Create_hindexed(self, blocklengths, displacements):
         """
         Create an indexed datatype
@@ -200,6 +189,58 @@ cdef class Datatype:
                                          &datatype.ob_mpi) )
         return datatype
 
+    def Create_indexed_block(self, int blocklength, displacements):
+        """
+        Create an indexed datatype
+        with constant-sized blocks
+        """
+        cdef int count = 0, *idisp = NULL
+        displacements = getarray_int(displacements, &count, &idisp)
+        #
+        cdef Datatype datatype = <Datatype>type(self)()
+        CHKERR( MPI_Type_create_indexed_block(count, blocklength,
+                                              idisp, self.ob_mpi,
+                                              &datatype.ob_mpi) )
+        return datatype
+
+    def Create_hindexed_block(self, int blocklength, displacements):
+        """
+        Create an indexed datatype
+        with constant-sized blocks
+        and displacements in bytes
+        """
+        cdef int count = 0
+        cdef MPI_Aint *idisp = NULL
+        count = <int>len(displacements) # XXX Overflow ?
+        displacements = asarray_Aint(displacements, count, &idisp)
+        #
+        cdef Datatype datatype = <Datatype>type(self)()
+        CHKERR( MPI_Type_create_hindexed_block(count, blocklength,
+                                               idisp, self.ob_mpi,
+                                               &datatype.ob_mpi) )
+        return datatype
+
+    @classmethod
+    def Create_struct(cls, blocklengths, displacements, datatypes):
+        """
+        Create an datatype from a general set of
+        block sizes, displacements and datatypes
+        """
+        cdef int count = 0, *iblen = NULL
+        blocklengths = getarray_int(blocklengths, &count, &iblen)
+        cdef MPI_Aint *idisp = NULL
+        displacements = asarray_Aint(displacements, count, &idisp)
+        cdef MPI_Datatype *ptype = NULL
+        datatypes = asarray_Datatype(datatypes, count, &ptype)
+        #
+        cdef Datatype datatype = <Datatype>cls()
+        CHKERR( MPI_Type_create_struct(count, iblen, idisp, ptype,
+                                       &datatype.ob_mpi) )
+        return datatype
+
+    # Subarray Datatype Constructor
+    # -----------------------------
+
     def Create_subarray(self, sizes, subsizes, starts,
                         int order=ORDER_C):
         """
@@ -208,9 +249,9 @@ cdef class Datatype:
         """
         cdef int ndims = 0, *isizes = NULL
         cdef int *isubsizes = NULL, *istarts = NULL
-        sizes    = getarray_int(sizes,    &ndims, &isizes   )
-        subsizes = chkarray_int(subsizes,  ndims, &isubsizes)
-        starts   = chkarray_int(starts,    ndims, &istarts  )
+        sizes    = getarray_int(sizes,   &ndims, &isizes   )
+        subsizes = chkarray_int(subsizes, ndims, &isubsizes)
+        starts   = chkarray_int(starts,   ndims, &istarts  )
         cdef int iorder = MPI_ORDER_C
         if order is not None: iorder = order
         #
@@ -220,6 +261,9 @@ cdef class Datatype:
                                          iorder, self.ob_mpi,
                                          &datatype.ob_mpi) )
         return datatype
+
+    # Distributed Array Datatype Constructor
+    # --------------------------------------
 
     def Create_darray(self, int size, int rank,
                       gsizes, distribs, dargs, psizes,
@@ -239,24 +283,6 @@ cdef class Datatype:
         CHKERR( MPI_Type_create_darray(size, rank, ndims, igsizes,
                                        idistribs, idargs, ipsizes,
                                        order, self.ob_mpi,
-                                       &datatype.ob_mpi) )
-        return datatype
-
-    @classmethod
-    def Create_struct(cls, blocklengths, displacements, datatypes):
-        """
-        Create an datatype from a general set of
-        block sizes, displacements and datatypes
-        """
-        cdef int count = 0, *iblen = NULL
-        blocklengths = getarray_int(blocklengths, &count, &iblen)
-        cdef MPI_Aint *idisp = NULL
-        displacements = asarray_Aint(displacements, count, &idisp)
-        cdef MPI_Datatype *ptype = NULL
-        datatypes = asarray_Datatype(datatypes, count, &ptype)
-        #
-        cdef Datatype datatype = <Datatype>cls()
-        CHKERR( MPI_Type_create_struct(count, iblen, idisp, ptype,
                                        &datatype.ob_mpi) )
         return datatype
 
@@ -334,33 +360,33 @@ cdef class Datatype:
         """
         Return the true lower bound and extent of a datatype
         """
-        cdef MPI_Aint lb = 0, extent = 0
-        CHKERR( MPI_Type_get_true_extent(self.ob_mpi,
-                                         &lb, &extent) )
+        cdef MPI_Count lb = 0, extent = 0
+        CHKERR( MPI_Type_get_true_extent_x(self.ob_mpi,
+                                           &lb, &extent) )
         return (lb, extent)
 
     property true_extent:
         """true extent"""
         def __get__(self):
-            cdef MPI_Aint lb = 0, extent = 0
-            CHKERR( MPI_Type_get_true_extent(self.ob_mpi,
-                                             &lb, &extent) )
+            cdef MPI_Count lb = 0, extent = 0
+            CHKERR( MPI_Type_get_true_extent_x(self.ob_mpi,
+                                               &lb, &extent) )
             return extent
 
     property true_lb:
         """true lower bound"""
         def __get__(self):
-            cdef MPI_Aint lb = 0, extent = 0
-            CHKERR( MPI_Type_get_true_extent(self.ob_mpi,
-                                             &lb, &extent) )
+            cdef MPI_Count lb = 0, extent = 0
+            CHKERR( MPI_Type_get_true_extent_x(self.ob_mpi,
+                                               &lb, &extent) )
             return lb
 
     property true_ub:
         """true upper bound"""
         def __get__(self):
-            cdef MPI_Aint lb = 0, extent = 0
-            CHKERR( MPI_Type_get_true_extent(self.ob_mpi, &lb,
-                                             &extent) )
+            cdef MPI_Count lb = 0, extent = 0
+            CHKERR( MPI_Type_get_true_extent_x(self.ob_mpi,
+                                               &lb, &extent) )
             return lb + extent
 
     # Decoding a Datatype
@@ -402,7 +428,7 @@ cdef class Datatype:
         # get the datatype envelope
         cdef int ni = 0, na = 0, nd = 0, combiner = MPI_UNDEFINED
         CHKERR( MPI_Type_get_envelope(self.ob_mpi, &ni, &na, &nd, &combiner) )
-        # return self immediatly for named datatypes
+        # return self immediately for named datatypes
         if combiner == MPI_COMBINER_NAMED: return self
         # get the datatype contents
         cdef int *i = NULL
@@ -457,6 +483,11 @@ cdef class Datatype:
             return (oldtype, ('INDEXED_BLOCK'),
                     {('blocklength')   : i[1],
                      ('displacements') : [i[k] for k from s2 <= k <= e2]})
+        elif combiner == <int>MPI_COMBINER_HINDEXED_BLOCK:
+            s2 = 0; e2 = i[0]-1
+            return (oldtype, ('HINDEXED_BLOCK'),
+                    {('blocklength')   : i[1],
+                     ('displacements') : [a[k] for k from s2 <= k <= e2]})
         elif (combiner == <int>MPI_COMBINER_STRUCT or
               combiner == <int>MPI_COMBINER_STRUCT_INTEGER):
             s1 = 1; e1 = i[0]
@@ -743,6 +774,7 @@ cdef Datatype __PACKED__ = new_Datatype( MPI_PACKED )
 cdef Datatype __BYTE__   = new_Datatype( MPI_BYTE   )
 cdef Datatype __AINT__   = new_Datatype( MPI_AINT   )
 cdef Datatype __OFFSET__ = new_Datatype( MPI_OFFSET )
+cdef Datatype __COUNT__  = new_Datatype( MPI_COUNT  )
 
 cdef Datatype __CHAR__               = new_Datatype( MPI_CHAR               )
 cdef Datatype __WCHAR__              = new_Datatype( MPI_WCHAR              )
@@ -823,6 +855,7 @@ PACKED = __PACKED__
 BYTE   = __BYTE__
 AINT   = __AINT__
 OFFSET = __OFFSET__
+COUNT  = __COUNT__
 # Elementary C datatypes
 CHAR                = __CHAR__
 WCHAR               = __WCHAR__

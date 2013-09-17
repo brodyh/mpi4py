@@ -67,7 +67,7 @@ or alternatively *setuptools* :program:`easy_install` (deprecated)::
 Using **distutils**
 -------------------
 
-*MPI for Python* uses a standard distutils-based buildsystem. However,
+*MPI for Python* uses a standard distutils-based build system. However,
 some distutils commands (like *build*) have additional options:
 
 * :option:`--mpicc=` : let you specify a special location or name for
@@ -105,7 +105,7 @@ After unpacking the release tarball::
 the distribution is ready for building.
 
 - If you use a MPI implementation providing a :program:`mpicc`
-  compiler wrapper (e.g., MPICH 1/2, Open MPI, LAM), it will be used
+  compiler wrapper (e.g., MPICH, Open MPI, LAM), it will be used
   for compilation and linking. This is the preferred and easiest way
   of building *MPI for Python*.
 
@@ -180,19 +180,27 @@ target Python version.
 
 
 Testing
-^^^^^^^
+-------
 
-Issuing at the command line::
+To quickly test the installation (Python 2.5 and up)::
+
+    $ mpiexec -n 5 python -m mpi4py helloworld
+    Hello, World! I am process 0 of 5 on localhost.
+    Hello, World! I am process 1 of 5 on localhost.
+    Hello, World! I am process 2 of 5 on localhost.
+    Hello, World! I am process 3 of 5 on localhost.
+    Hello, World! I am process 4 of 5 on localhost.
+
+If you installed from source, issuing at the command line::
 
     $ mpiexec -n 5 python demo/helloworld.py
 
-or (in the case of older MPI-1 implementations)::
+or (in the case of ancient MPI-1 implementations)::
 
     $ mpirun -np 5 python demo/helloworld.py
 
 will launch a five-process run of the Python interpreter and run the
-test scripts :file:`demo/helloworld.py`.
-
+test script :file:`demo/helloworld.py` from the source distribution.
 
 You can also run all the *unittest* scripts::
 
@@ -202,4 +210,10 @@ or, if you have nose_ unit testing framework installed::
 
     $ mpiexec -n 5 nosetests -w test
 
-.. _nose: http://somethingaboutorange.com/mrl/projects/nose/
+.. _nose: http://nose.readthedocs.org/
+
+or, if you have `py.test`_ unit testing framework installed::
+
+    $ mpiexec -n 5 py.test test/
+
+.. _py.test: http://pytest.org/
